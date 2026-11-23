@@ -13,7 +13,7 @@
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white)
 ![PWA](https://img.shields.io/badge/web-PWA-5A0FC8?logo=pwa&logoColor=white)
 
-[Возможности](#возможности) · [Как устроено](#как-устроено) · [Быстрый старт](#быстрый-старт) · [Клиенты](#клиенты) · [Площадки](#площадки) · [Свой сервер](#свой-сервер) · [Лицензия](#лицензия)
+[Возможности](#возможности) · [Как устроено](#как-устроено) · [Быстрый старт](#быстрый-старт) · [Готовые сборки](#готовые-сборки) · [Клиенты](#клиенты) · [Площадки](#площадки) · [Свой сервер](#свой-сервер) · [Лицензия](#лицензия)
 
 </div>
 
@@ -159,6 +159,21 @@ make player-demo
 
 </details>
 
+## Готовые сборки
+
+На странице [Releases](../../releases) — по каждому тегу `v*`, собирает
+[`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+| Что | Где |
+|---|---|
+| серверные образы для amd64 и arm64 | `ghcr.io/niazlv/kino-core`, `kino-gateway`, `kino-crawler`, `kino-migrate`, `kino-web` |
+| Android — ядро с демо-площадкой | `kino-core-<версия>.apk`, пакет `ru.sorewa.kino.core` |
+| iOS без подписи — для AltStore или Sideloadly | `kino-<версия>-unsigned.ipa` |
+
+Полная сборка с площадками — сервер и Android-приложение, которое работает и
+без сервера, — в [kino-providers](https://github.com/niazlv/kino-providers).
+У неё свой пакет (`ru.sorewa.kino`) и своя подпись: обе ставятся рядом.
+
 ## Клиенты
 
 | Клиент | Где | Что нужно |
@@ -193,6 +208,9 @@ cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig              # iO
   [docs/script-sources.md](docs/script-sources.md);
 - **пакет на Go** — по протоколу площадок, как [`examples/demo`](examples/demo/README.md),
   и одна строка импорта, как `cmd/*/demo.go`.
+
+Площадки автора к конкретным источникам и полная сборка с ними — отдельный
+репозиторий [kino-providers](https://github.com/niazlv/kino-providers).
 
 ```bash
 mkdir -p sources

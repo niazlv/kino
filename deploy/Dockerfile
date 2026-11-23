@@ -10,7 +10,12 @@
 # 1.27: kinopub-downloader заявляет go 1.27.1 — тулчейн 1.26 его модуль не
 # собирает («requires go >= 1.27.1»), образ идёт в ногу.
 ARG CMD
-FROM golang:1.27-alpine AS build
+# Сборка — на машине сборки, под целевую платформу — кросс-компиляцией Go:
+# образы для amd64 и arm64 собираются без эмуляции (TARGETOS/TARGETARCH даёт
+# buildx; обычный docker build оставляет их пустыми — тогда родная платформа).
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 ARG SRC=.
 # Утилита — только если она есть в контексте: шаблон [e] совпадает с
 # каталогом или ни с чем, а LICENSE.md проекта держит COPY непустым.
@@ -26,7 +31,7 @@ ARG CMD
 # окружения, deploy.sh — из deploy/prod/local.env). Пусто — площадка возьмёт
 # токен со страницы сайта.
 ARG LORDFILM_ALLOHA_DEFAULT_TOKEN=""
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-X github.com/niazleushkin/kino/providers/lordfilm.defaultToken=${LORDFILM_ALLOHA_DEFAULT_TOKEN}" \
     -o /out/app ./cmd/${CMD}
 

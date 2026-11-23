@@ -29,7 +29,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # В публичных исходниках deploy/prod нет — тогда только окружение.
 if [[ -f "$ROOT/deploy/prod/local-env.sh" ]]; then . "$ROOT/deploy/prod/local-env.sh"; fi
 TOOL=${KINOPUB_SRC:-"$ROOT/../kinopub-downloader"}
-OUT="$ROOT/web/apps/android/android/app/src/main/jniLibs/arm64-v8a"
+# KINO_JNILIBS=<каталог> — куда класть утилиту и ffmpeg (по умолчанию — старая
+# оболочка; нативному android/ и автосборке — android/app/src/main/jniLibs/arm64-v8a).
+OUT=${KINO_JNILIBS:-"$ROOT/web/apps/android/android/app/src/main/jniLibs/arm64-v8a"}
 CACHE=${KINO_BUILD_CACHE:-"$HOME/Library/Caches/kino-android"}
 NDK=${ANDROID_NDK:-$(ls -d "${ANDROID_HOME:-$HOME/Library/Android/sdk}"/ndk/27.* 2>/dev/null | sort -V | tail -1)}
 FFMPEG_TAG=${FFMPEG_TAG:-n7.1}
@@ -49,6 +51,8 @@ if [[ "$WHAT" == all || "$WHAT" == kinopub ]]; then
   # напрямую, а он у части сетей закрыт — загрузки молча падали.
   [[ -d "$NDK" ]] || die "нет Android NDK (ANDROID_NDK=…)"
   CC_ANDROID="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+  # Автосборка (GitHub Actions) — Linux: у NDK там свой каталог.
+  [[ -x "$CC_ANDROID" ]] || CC_ANDROID="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
   (cd "$TOOL" && CGO_ENABLED=1 CC="$CC_ANDROID" GOOS=android GOARCH=arm64 \
     go build -trimpath -ldflags "-s -w -X main.version=$VER -extldflags=-Wl,-z,max-page-size=16384" \
     -o "$OUT/libkinopub.so" ./cmd/kinopub)

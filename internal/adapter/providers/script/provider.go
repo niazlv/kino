@@ -234,8 +234,15 @@ func changed(ctx context.Context, r *runner, m Meta, since time.Time, fn func(dp
 	if !r.pack.has("changed") {
 		return nil
 	}
-	ctx, cancel := withCallTimeout(ctx)
+	// Обход идёт минутами (полный каталог — тысячи тайтлов, на каждый —
+	// серии), поэтому общий срок вызова ему не подходит: срок — на простой
+	// скрипта. Он сбрасывается каждой находкой, а пока платформа сохраняет
+	// находку и спрашивает её серии (fn), часы стоят: это не время скрипта.
+	// Зависший скрипт (бесконечный цикл, вечный запрос) по-прежнему прерван.
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	idle := time.AfterFunc(callTimeout, cancel)
+	defer idle.Stop()
 	v, err := r.acquire(ctx)
 	if err != nil {
 		return err
@@ -244,24 +251,32 @@ func changed(ctx context.Context, r *runner, m Meta, since time.Time, fn func(dp
 	var fnErr error
 	emit := func(c goja.FunctionCall) goja.Value {
 		if fnErr != nil {
-			return goja.Undefined()
+			// Платформа сказала «хватит» (потолок обхода, остановка) — скрипт
+			// не ходит дальше по страницам впустую.
+			panic(v.rt.NewGoError(fnErr))
 		}
 		var t jsTitle
 		raw, _ := json.Marshal(exportPlain(c.Argument(0).Export()))
 		if err := json.Unmarshal(raw, &t); err != nil || t.ID == "" {
 			return goja.Undefined()
 		}
+		idle.Stop()
 		fnErr = fn(t.title(m))
+		idle.Reset(callTimeout)
+		if fnErr != nil {
+			panic(v.rt.NewGoError(fnErr))
+		}
 		return goja.Undefined()
 	}
 	sinceArg := ""
 	if !since.IsZero() {
 		sinceArg = since.UTC().Format(time.RFC3339)
 	}
-	if _, err := v.call(ctx, "changed", sinceArg, emit); err != nil {
-		return err
+	_, err = v.call(ctx, "changed", sinceArg, emit)
+	if fnErr != nil {
+		return fnErr
 	}
-	return fnErr
+	return err
 }
 
 func (p *Provider) Resolve(ctx context.Context, req dp.ResolveRequest) (dp.Source, error) {

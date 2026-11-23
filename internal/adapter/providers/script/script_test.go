@@ -288,3 +288,44 @@ func TestNewer(t *testing.T) {
 		}
 	}
 }
+
+// Обход длиннее срока вызова доходит до конца: срок — на простой скрипта, а
+// время платформы на находку (сохранение, серии) не считается. Зависший
+// скрипт прерывается, «хватит» от платформы останавливает скрипт.
+func TestChangedIsBoundByIdleNotTotal(t *testing.T) {
+	old := callTimeout
+	callTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { callTimeout = old })
+	srv := site(t)
+	defer srv.Close()
+
+	walk := func(body string) (int, error) {
+		p, err := pack(t, srv, direct+body).New(env(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		err = p.ChangedSince(context.Background(), time.Time{}, func(dp.Title) error {
+			n++
+			time.Sleep(60 * time.Millisecond) // платформа сохраняет и спрашивает серии
+			if n == 50 {
+				return errors.New("хватит")
+			}
+			return nil
+		})
+		return n, err
+	}
+
+	n, err := walk(`changed: function (since, emit) { for (var i = 1; i <= 8; i++) emit({id: i, title: "т" + i}); },`)
+	if err != nil || n != 8 {
+		t.Fatalf("обход 8×60 мс при сроке 150 мс: %d находок, %v", n, err)
+	}
+	if _, err := walk(`changed: function (since, emit) { emit({id: 1, title: "т"}); while (true) {} },`); err == nil {
+		t.Fatal("зависший скрипт не прерван")
+	}
+	callTimeout = 10 * time.Second
+	n, err = walk(`changed: function (since, emit) { for (var i = 1; i <= 1000; i++) emit({id: i, title: "т"}); },`)
+	if n != 50 || err == nil || err.Error() != "хватит" {
+		t.Fatalf("стоп платформы: %d находок, %v", n, err)
+	}
+}

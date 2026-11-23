@@ -193,8 +193,9 @@ func (p *Pack) Spec(origin source.Origin) source.Spec {
 }
 
 // callTimeout — потолок одного вызова скрипта: поиск с десятком страниц
-// укладывается, бесконечный цикл — нет.
-const callTimeout = 90 * time.Second
+// укладывается, бесконечный цикл — нет. У обхода (changed) это срок
+// простоя, а не всего обхода. Переменная — ради теста.
+var callTimeout = 90 * time.Second
 
 func withCallTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < callTimeout {

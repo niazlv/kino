@@ -31,6 +31,7 @@ tsconfig.tsbuildinfo
 # Ключ подписи Android и его пароль
 web/apps/android/keystore/*.jks
 web/apps/android/keystore/keystore.properties
+web/apps/android/keystore/*.properties
 
 # APK для проверки самообновления на стенде
 deploy/apk/

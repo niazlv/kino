@@ -1,0 +1,168 @@
+# Релиз ядра (публичный niazlv/kino): серверные образы для amd64 и arm64,
+# APK ru.sorewa.kino.core с демо-площадкой и неподписанный IPA.
+#
+#   тег v*        — сборка и выпуск: образы в ghcr.io, APK и IPA в GitHub Release;
+#   вручную       — только сборка (проверка), артефакты — у прогона.
+#
+# Сборки секретов не видят. Подпись APK — отдельное задание publish в
+# окружении release (ручное подтверждение владельцем): там только apksigner
+# и ключ ядра. Ключи и окружение заводит scripts/setup-release-keys.sh.
+#
+# В приватном репозитории, из которого снимается ядро, задания пропускаются.
+name: Релиз
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  server:
+    name: Серверные образы
+    if: github.repository == 'niazlv/kino'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - if: env.RELEASE == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Сборка (по тегу — и публикация)
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE" == true ]]; then plat=linux/amd64,linux/arm64; out=(--push)
+          else plat=linux/amd64; out=(--output type=cacheonly); fi
+          build() { # имя, Dockerfile, аргументы сборки...
+            local name=$1 file=$2; shift 2
+            local tags=()
+            [[ "$RELEASE" == true ]] && tags=(-t "ghcr.io/$OWNER/kino-$name:$TAG" -t "ghcr.io/$OWNER/kino-$name:latest")
+            docker buildx build --platform "$plat" -f "$file" "$@" "${tags[@]}" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" "${out[@]}" .
+          }
+          for svc in core gateway crawler migrate; do build "$svc" deploy/Dockerfile --build-arg CMD="$svc"; done
+          build web deploy/web.Dockerfile
+
+  android:
+    name: APK (ядро, демо-площадка)
+    if: github.repository == 'niazlv/kino'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: kino}
+      - name: Версия утилиты загрузки
+        id: kd
+        run: echo "ref=$(cat kino/.github/kinopub-downloader.ref 2>/dev/null || echo main)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: niazlv/kinopub-downloader
+          ref: ${{ steps.kd.outputs.ref }}
+          path: kinopub-downloader
+      - uses: actions/setup-go@v5
+        with: {go-version-file: kino/go.mod, cache-dependency-path: kino/go.sum}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '21'}
+      - name: Android NDK r27
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" >/dev/null
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/kino-android
+          key: ffmpeg-n7.1-ndk27-${{ runner.os }}
+      - name: Утилита загрузки, ffmpeg и движок
+        working-directory: kino
+        env:
+          KINO_JNILIBS: ${{ github.workspace }}/kino/android/app/src/main/jniLibs/arm64-v8a
+        run: |
+          web/apps/android/tools/build-bins.sh all
+          web/apps/android/tools/build-bins.sh engine
+      - name: APK без подписи
+        working-directory: kino/android
+        run: ./gradlew :app:assembleRelease -PappIdSuffix=.core -PkinoUrl= --no-daemon --stacktrace
+      - name: Артефакт
+        run: |
+          set -euo pipefail
+          apk=$(ls ~/Library/Caches/kino-android-native/app/outputs/apk/release/*.apk | head -1)
+          mkdir -p out && cp "$apk" out/kino-core-unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with: {name: android, path: out/}
+
+  ios:
+    name: IPA без подписи
+    if: github.repository == 'niazlv/kino'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: IPA
+        run: ios/scripts/build-unsigned-ipa.sh "$PWD/out/kino-unsigned.ipa"
+      - uses: actions/upload-artifact@v4
+        with: {name: ios, path: out/}
+
+  publish:
+    name: Подпись и выпуск
+    needs: [server, android, ios]
+    if: github.repository == 'niazlv/kino' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: art, merge-multiple: true}
+      - name: Подпись APK ключом ядра
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KS_B64" ]] || { echo "::error::нет секретов подписи — запустите scripts/setup-release-keys.sh"; exit 1; }
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          ks=$(mktemp); trap 'rm -f "$ks"' EXIT
+          base64 -d <<<"$KS_B64" >"$ks"
+          "$bt/zipalign" -p -f 4 art/kino-core-unsigned.apk aligned.apk
+          "$bt/apksigner" sign --ks "$ks" --ks-pass env:KS_PASS --ks-key-alias "$KEY_ALIAS" \
+            --key-pass env:KEY_PASS --out "kino-core-$TAG.apk" aligned.apk
+          "$bt/apksigner" verify --print-certs "kino-core-$TAG.apk" | grep -m1 'SHA-256'
+          cp art/kino-unsigned.ipa "kino-$TAG-unsigned.ipa"
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          cat >notes.md <<EOF
+          Ядро kino с демо-площадкой (открытые фильмы Blender, CC BY). Площадки к другим источникам — отдельно (ADR-0018).
+
+          **Сервер** — образы для amd64 и arm64:
+          \`ghcr.io/$OWNER/kino-core:$TAG\`, \`kino-gateway\`, \`kino-crawler\`, \`kino-migrate\`, \`kino-web\`.
+
+          **Android** — \`kino-core-$TAG.apk\` (пакет ru.sorewa.kino.core; ставится рядом с полной сборкой, не поверх неё). При первом запуске приложение спросит адрес сервера.
+
+          **iOS** — \`kino-$TAG-unsigned.ipa\` без подписи: ставится через AltStore или Sideloadly своим Apple ID.
+          EOF
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "kino $TAG" --notes-file notes.md \
+            "kino-core-$TAG.apk" "kino-$TAG-unsigned.ipa"

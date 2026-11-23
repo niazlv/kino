@@ -2,7 +2,8 @@
 # Vite не рассчитан на прокачку видеосегментов и блокирует очередь.
 # Контекст и SRC — как у deploy/Dockerfile: сам репозиторий (SRC=.) или
 # родительский каталог (SRC=<каталог проекта>).
-FROM node:22-alpine AS build
+# Статика от платформы не зависит: собирается на машине сборки.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 ARG SRC=.
 WORKDIR /src
 RUN corepack enable
