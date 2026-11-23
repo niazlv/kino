@@ -11,8 +11,10 @@
 #      соседний каталог, которого у чужого человека нет) и запускает go mod tidy;
 #   2. проверяет, что в снимке не осталось ни площадок, ни ссылок на них;
 #   3. собирает и тестирует: go build, go vet, go test, make boundaries;
-#   4. предупреждает о том, что не ломает сборку Go, но мешает человеку
-#      со снимком (Docker-сборка, ссылки на приватную часть).
+#   4. проверяет Docker-сборку снимка так, как её увидит человек без .env и
+#      без соседних каталогов: куда смотрит контекст (docker compose config)
+#      и есть ли в нём всё, что копируют Dockerfile. Это предупреждение, не
+#      провал: сборка Go от него не зависит. Нет docker — шаг пропускается.
 #
 # Снимок МЕНЯЕТСЯ (go.mod, go.sum) — так и задумано: публикуется именно он.
 # Выход не 0 — снимок публиковать нельзя.
@@ -58,16 +60,73 @@ if [[ -x scripts/check-boundaries.sh ]]; then
 	ok "make boundaries"
 fi
 
-say "Что мешает человеку со снимком (не ломает сборку Go)"
-quiet=1
-if grep -q kinopub-downloader deploy/Dockerfile 2>/dev/null; then
-	warn "deploy/Dockerfile копирует соседний kinopub-downloader и собирает из родительского каталога — docker compose build со снимком не пройдёт"
-	quiet=0
+say "Docker-сборка снимка (предупреждения, не провал)"
+# Смотрим не на строки в файлах, а на то, что соберёт compose у человека со
+# снимком: без .env, без KINO_* в окружении, без соседних каталогов.
+# Сервисам нужен .env (env_file): человек делает его из .env.example — так же
+# и здесь, только на время разбора, и потом убираем.
+made_env=0
+if [[ ! -e .env && -f .env.example ]]; then
+	cp .env.example .env
+	made_env=1
 fi
-if grep -rqs "$MOD/providers/" deploy web/apps/android/tools 2>/dev/null; then
-	warn "сборочные скрипты передают -X в пакеты providers/ (токен площадки) — в снимке это пустая подстановка"
-	quiet=0
+cfg_ok=1
+if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
+	cfg_ok=0
+	warn "нет docker compose — сборку образов не проверял"
+elif ! cfg=$(env -u KINO_BUILD_CONTEXT -u KINO_SRC docker compose --project-directory . -f docker-compose.yml \
+	config --format json 2>&1); then
+	cfg_ok=0
+	warn "docker compose config не разобрал docker-compose.yml: $(echo "$cfg" | tail -1)"
 fi
-[[ $quiet == 0 ]] || ok "ничего"
+[[ $made_env == 0 ]] || rm -f .env
+if [[ $cfg_ok == 1 ]]; then
+	# Для каждого образа: контекст — сам снимок, Dockerfile в нём есть, и всё,
+	# что Dockerfile копирует (кроме шаблонов вида kinopub-download[e]r — им
+	# можно ничего не найти), лежит в контексте. ${SRC} — из аргументов
+	# сборки compose (по умолчанию «.»).
+	issues=$(printf '%s' "$cfg" | python3 -I -c '
+import json, os, re, sys
+root = os.path.realpath(sys.argv[1])
+cfg = json.load(sys.stdin)
+seen = set()
+for name, svc in sorted((cfg.get("services") or {}).items()):
+    b = svc.get("build")
+    if not b:
+        continue
+    ctx = os.path.realpath(b.get("context", "."))
+    if ctx != root:
+        print(f"{name}: контекст сборки {ctx} — вне снимка (ждём сам снимок)")
+        continue
+    df = os.path.join(ctx, b.get("dockerfile", "Dockerfile"))
+    if not os.path.isfile(df):
+        print(f"{name}: нет Dockerfile {os.path.relpath(df, root)}")
+        continue
+    args = {k: (v if v is not None else "") for k, v in (b.get("args") or {}).items()}
+    for line in open(df, encoding="utf-8"):
+        m = re.match(r"\s*(?:COPY|ADD)\s+(.*)", line)
+        if not m:
+            continue
+        parts = [p for p in m.group(1).split() if not p.startswith("--")]
+        if "--from=" in m.group(1) or len(parts) < 2:
+            continue
+        for src in parts[:-1]:
+            src = re.sub(r"\$\{(\w+)\}", lambda a: args.get(a.group(1), "."), src)
+            if re.search(r"[\[*?]", src):
+                continue
+            key = (os.path.relpath(df, root), src)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not os.path.exists(os.path.join(ctx, src)):
+                print(f"{name}: {key[0]} копирует {src} — в снимке его нет")
+' "$PWD")
+	if [[ -n "$issues" ]]; then
+		while IFS= read -r l; do warn "$l"; done <<<"$issues"
+		warn "docker compose build со снимком не пройдёт"
+	else
+		ok "контекст — сам снимок, всё, что копируют Dockerfile, в нём есть"
+	fi
+fi
 echo
 echo "Снимок собирается и проходит тесты."
