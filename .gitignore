@@ -1,0 +1,39 @@
+# build
+/bin/
+*.exe
+
+# local env
+.env
+# личные настройки выкатки: сервер, домен, ключ APK, чужие токены
+deploy/prod/local.env
+docker-compose.override.yml
+
+# generated (восстанавливается через `make generate`)
+/internal/gen/
+/web/packages/api-client/src/generated/
+
+# node
+node_modules/
+dist/
+.vite/
+tsconfig.tsbuildinfo
+
+# локальные настройки инструментов
+.claude/
+
+# media / данные
+/var/
+
+# собранные бинарники
+/bin/
+/probe
+
+# Ключ подписи Android и его пароль
+web/apps/android/keystore/*.jks
+web/apps/android/keystore/keystore.properties
+
+# APK для проверки самообновления на стенде
+deploy/apk/
+
+# Бинарники утилиты и ffmpeg для APK — артефакты web/apps/android/tools/build-bins.sh
+web/apps/android/android/app/src/main/jniLibs/

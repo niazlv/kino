@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  http — только к серверу домашней сети (правило ServerAddress.allowsCleartext,
+	  то же на Android): сервер в интернете — только https. Для этого хватает
+	  стандартного исключения ATS для локальной сети (NSAllowsLocalNetworking):
+	  обоснования для App Store оно не требует, публичные домены по http iOS
+	  по-прежнему режет. Что именно оно пропускает — см. ServerAddress.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!--
+	  Сервер по умолчанию этой сборки: KINO_URL из Config/Kino.xcconfig
+	  (свой адрес — в Config/Local.xcconfig). Пусто — сервера по умолчанию нет,
+	  приложение при первом запуске спросит адрес (см. ServerConfig).
+	-->
+	<key>KinoServerURL</key>
+	<string>$(KINO_URL)</string>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+</dict>
+</plist>

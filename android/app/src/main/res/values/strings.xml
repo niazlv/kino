@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">kino</string>
+    <string name="now_playing_channel">Просмотр</string>
+    <string name="downloads_channel">Загрузки</string>
+</resources>

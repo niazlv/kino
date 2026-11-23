@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+// Контракт «gateway <-> core». Единственная связь gateway с остальной системой.
+// Здесь НЕТ ни одного провайдерского типа — в этом весь смысл (ADR-0002).
+package kino.gateway.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service TicketService {
+  rpc Get(GetTicketRequest) returns (Ticket);
+  // Ссылка протухла посреди фильма. Gateway не резолвит сам (нет кода
+  // провайдера) — он просит core обновить по ID. Метод generic.
+  rpc Refresh(RefreshTicketRequest) returns (Ticket);
+}
+
+message GetTicketRequest     { string ticket_id = 1; }
+message RefreshTicketRequest { string ticket_id = 1; string reason = 2; }
+
+message Ticket {
+  uint32 v = 1;                 // короткий TTL делает миграции этой оси бесплатными
+  string ticket_id = 2;
+  int64 user_id = 3;
+  int64 episode_id = 4;
+
+  Upstream upstream = 5;
+  Constraints constraints = 6;
+
+  google.protobuf.Timestamp expires_at = 7;
+  bool refreshable = 8;
+  DeliveryMode delivery_mode = 9;
+}
+
+// Описание ПЕРЕНОСА, а не источника. Ни слова про kinopub и провайдеров.
+message Upstream {
+  string protocol = 1;                    // HLS | DASH | PROGRESSIVE
+  string url = 2;
+  map<string, string> headers = 3;        // ЧУВСТВИТЕЛЬНО: редакция в логгере обязательна
+  repeated string allowed_origins = 4;    // редиректы за пределы списка отвергаются
+  bool ip_bound = 5;
+}
+
+message Constraints { int32 max_height = 1; int32 max_bitrate_kbps = 2; }
+
+enum DeliveryMode {
+  DELIVERY_MODE_UNSPECIFIED = 0;
+  DELIVERY_MODE_PROXY = 1;     // байты через нас (дефолт)
+  DELIVERY_MODE_REDIRECT = 2;  // 302 на CDN
+  DELIVERY_MODE_LOCAL = 3;     // скачано и ремукснуто локально
+}

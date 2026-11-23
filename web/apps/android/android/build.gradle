@@ -1,0 +1,36 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'com.google.gms:google-services:4.4.4'
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+apply from: "variables.gradle"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+
+// Сборка идёт вне ~/Documents: iCloud, синхронизируя дерево проекта, плодит
+// копии вида «X 2.dex» прямо в intermediates и валит слияние dex. Каталог
+// в ~/Library/Caches iCloud не трогает. Готовый APK: см. deploy/prod/publish-apk.sh.
+allprojects {
+    layout.buildDirectory = file("${System.getProperty('user.home')}/Library/Caches/kino-android/${project.name}")
+}

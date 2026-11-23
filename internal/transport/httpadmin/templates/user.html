@@ -1,0 +1,200 @@
+{{define "actions"}}<a class="btn ghost" href="{{.Prefix}}/users">← Все пользователи</a>{{end}}
+{{define "content"}}
+{{$u := .User}}
+{{with .Reveal}}
+<section class="card reveal">
+  {{if eq .Kind "created"}}
+  <h2>Пользователь заведён</h2>
+  <p class="muted">Дальше — пустить его телефон: пусть откроет приложение, а код с его экрана введите в «Вход по коду» ниже. Пароль ниже нужен, только если он захочет войти с компьютера; показывается один раз.</p>
+  <div class="secret"><code>{{.Value}}</code><button class="btn sm" data-copy="{{.Value}}">Скопировать</button></div>
+  {{else if eq .Kind "device"}}
+  <h2>Устройство подключено</h2>
+  <p><b>{{device .Value}}</b> <span class="muted">войдёт как {{$u.Login}} в ближайшие секунды — само, ничего нажимать не нужно.</span></p>
+  {{else if eq .Kind "password"}}
+  <h2>Новый временный пароль</h2>
+  <p class="muted">Показывается один раз и нигде не сохраняется. Передайте его человеку и попросите сменить при первом входе — в витрине, по клику на своё имя.</p>
+  <div class="secret"><code>{{.Value}}</code><button class="btn sm" data-copy="{{.Value}}">Скопировать</button></div>
+  {{else}}
+  <h2>Второй фактор выпущен</h2>
+  <p class="muted">Отсканируйте код приложением-аутентификатором или вставьте адрес вручную. Прежний секрет больше не действует. Показывается один раз.</p>
+  <div class="totp">
+    {{if $.RevealQR}}<img src="{{$.RevealQR}}" alt="QR для authenticator" width="200" height="200">{{end}}
+    <div class="secret"><code>{{.Value}}</code><button class="btn sm" data-copy="{{.Value}}">Скопировать</button></div>
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+<section class="card head">
+  <span class="avatar lg">{{initials $u.Login $u.DisplayName}}</span>
+  <div>
+    <h2>{{$u.DisplayName}} <span class="muted">@{{$u.Login}}</span></h2>
+    <div class="chips">
+      {{if eq $u.Role "admin"}}<span class="chip accent">админ</span>{{else}}<span class="chip">пользователь</span>{{end}}
+      {{if $u.Disabled}}<span class="chip error">заблокирован</span>{{else}}<span class="chip ok">активен</span>{{end}}
+      {{if $u.TOTPEnabled}}<span class="chip ok">второй фактор</span>{{end}}
+      {{if .IsSelf}}<span class="chip">это вы</span>{{end}}
+    </div>
+    <div class="muted small">в системе с {{date $u.CreatedAt}} · последний вход {{if $u.LastLoginAt}}{{since $u.LastLoginAt}}{{else}}никогда{{end}}</div>
+  </div>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <h2>Доступ</h2>
+    {{if $u.Disabled}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/enable">
+      <div><b>Разблокировать</b><small>Вход снова открыт. Сессии придётся открыть заново.</small></div>
+      <button class="btn">Разблокировать</button>
+    </form>
+    {{else if not .IsSelf}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/disable"
+          data-confirm="Заблокировать {{$u.Login}}? Все его сессии будут завершены.">
+      <div>
+        <b>Заблокировать</b><small>Вход закрывается, все сессии гаснут сразу.</small>
+        <input name="reason" placeholder="причина — попадёт в журнал" maxlength="200">
+      </div>
+      <button class="btn danger">Заблокировать</button>
+    </form>
+    {{end}}
+
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/revoke-sessions"
+          data-confirm="Завершить все сессии {{$u.Login}}?{{if .IsSelf}} Вашу текущую тоже.{{end}}">
+      <div><b>Выйти везде</b><small>Гасит все устройства{{if .IsSelf}}, включая эту вкладку{{end}}. Пароль не меняется.</small></div>
+      <button class="btn">Завершить сессии</button>
+    </form>
+
+    {{if not .IsSelf}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/reset-password"
+          data-confirm="Выдать {{$u.Login}} новый пароль? Старый перестанет работать, все сессии будут завершены.">
+      <div><b>Сбросить пароль</b><small>Выдаётся временный, показывается один раз. Старый и все сессии — в утиль.</small></div>
+      <button class="btn">Новый пароль</button>
+    </form>
+    {{end}}
+  </section>
+
+  <section class="card">
+    <h2>Роль и второй фактор</h2>
+    {{if not .Sudo}}<p class="muted small">Сброс пароля, смена роли и выпуск фактора попросят код заново: он вводился больше четверти часа назад.</p>{{end}}
+    {{if .IsSelf}}
+    <p class="muted">Свою роль менять нельзя: платформа не должна остаться без администратора.</p>
+    {{else if eq $u.Role "admin"}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/role"
+          data-confirm="Разжаловать {{$u.Login}} в пользователи? Его сессии будут завершены.">
+      <input type="hidden" name="role" value="user">
+      <div><b>Разжаловать</b><small>Останется обычным пользователем, второй фактор перестанет быть нужен.</small></div>
+      <button class="btn">В пользователи</button>
+    </form>
+    {{else}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/role"
+          data-confirm="Сделать {{$u.Login}} администратором?">
+      <input type="hidden" name="role" value="admin">
+      <div><b>Сделать администратором</b><small>Чтобы войти сюда, ему понадобится ещё и второй фактор — выпустите его следующим шагом.</small></div>
+      <button class="btn">В администраторы</button>
+    </form>
+    {{end}}
+
+    {{if eq $u.Role "admin"}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/totp"
+          data-confirm="{{if $u.TOTPEnabled}}Перевыпустить второй фактор для {{$u.Login}}? Старый код перестанет подходить.{{else}}Выпустить второй фактор для {{$u.Login}}?{{end}}">
+      <div>
+        <b>{{if $u.TOTPEnabled}}Перевыпустить второй фактор{{else}}Выпустить второй фактор{{end}}</b>
+        <small>QR и адрес для authenticator покажутся один раз.</small>
+      </div>
+      <button class="btn">{{if $u.TOTPEnabled}}Перевыпустить{{else}}Выпустить{{end}}</button>
+    </form>
+    {{else}}
+    <p class="muted small">Второй фактор нужен только администраторам.</p>
+    {{end}}
+  </section>
+</div>
+
+{{if not .IsSelf}}
+<div class="cols">
+  <section class="card">
+    <h2>Вход по коду</h2>
+    {{if $u.Disabled}}
+    <p class="muted small">Пользователь заблокирован — устройство не подключить.</p>
+    {{else}}
+    <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/device"
+          data-confirm="Подключить это устройство к аккаунту {{$u.Login}}? Оно будет смотреть от его имени.">
+      <div>
+        <b>Подключить телефон или телевизор</b>
+        <small>Приложение при входе показывает код и QR. Введите код сюда — устройство войдёт как {{$u.Login}}. QR не сканируйте своим телефоном: он подтвердит вход в ВАШ аккаунт. Если {{$u.Login}} уже вошёл хоть где-то, он подключит устройство и сам: витрина → Профиль → «Подключить устройство».</small>
+        <input name="code" placeholder="код с экрана, например KJ7Q-3MTR" autocomplete="off" autocapitalize="characters" spellcheck="false" required maxlength="20">
+      </div>
+      <button class="btn primary">Подключить</button>
+    </form>
+    {{if not .Sudo}}<p class="muted small">Попросит код из authenticator заново: он вводился больше четверти часа назад.</p>{{end}}
+    {{end}}
+  </section>
+
+  <section class="card">
+    <h2>Перенос из kinopub</h2>
+    <div class="act">
+      <div>
+        <b>История и папка закладок</b>
+        <small>{{with .Import}}{{if .Running}}Идёт: {{.What}}.{{else if .Err}}Прервался: {{.What}}.{{else}}Последний: {{.What}} — {{.Summary}}.{{end}}{{else}}Общий «я смотрю» с позициями и личная папка — в «Буду смотреть».{{end}}</small>
+      </div>
+      <a class="btn" href="{{$.Prefix}}/users/{{$u.ID}}/import">Открыть</a>
+    </div>
+  </section>
+</div>
+{{end}}
+
+<section class="card">
+  <h2>Passkey <span class="muted">{{len .Passkeys}}</span></h2>
+  {{if .Passkeys}}
+  <table class="list compactish">
+    <thead><tr><th>Ключ</th><th>Добавлен</th><th>Использован</th><th></th></tr></thead>
+    <tbody>
+    {{range .Passkeys}}
+    <tr>
+      <td><b>{{.Name}}</b>{{if .BackedUp}} <span class="chip">в облаке</span>{{end}}</td>
+      <td class="muted nowrap">{{date .CreatedAt}}</td>
+      <td class="muted nowrap">{{if .LastUsedAt}}{{since .LastUsedAt}}{{else}}ещё нет{{end}}</td>
+      <td class="r">
+        <form method="post" action="{{$.Prefix}}/users/{{$u.ID}}/passkeys/{{.ID}}/delete"
+              data-confirm="Удалить ключ «{{.Name}}»?">
+          <button class="btn sm ghost">Удалить</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted small">Ключей нет.{{if .IsSelf}} С passkey можно входить без пароля и подтверждать действия одним касанием.{{end}}</p>
+  {{end}}
+  {{if .IsSelf}}
+  <div class="row" style="margin-top:12px">
+    <button type="button" class="btn" hidden data-passkey="register"
+            data-begin="{{$.Prefix}}/passkeys/begin" data-finish="{{$.Prefix}}/passkeys/finish"
+            data-next="{{$.Prefix}}/users/{{$u.ID}}?m=passkey_added" data-name="Мой ключ">
+      Добавить passkey
+    </button>
+    <span class="err small" data-passkey-error hidden></span>
+  </div>
+  {{end}}
+</section>
+
+<section class="card table">
+  <h2>Живые сессии <span class="muted">{{len .Sessions}}</span></h2>
+  {{if .Sessions}}
+  <table class="list">
+    <thead><tr><th>Пространство</th><th>Устройство</th><th>Вошёл</th><th>Истекает</th></tr></thead>
+    <tbody>
+    {{range .Sessions}}
+    <tr>
+      <td>{{if eq (print .Space) "admin"}}<span class="chip accent">админка</span>{{else}}<span class="chip">{{space .Space}}</span>{{end}}</td>
+      <td>{{device .DeviceKind}}{{if .RefreshExpiresAt}} <span class="chip">устройство</span>{{end}}</td>
+      <td class="muted nowrap">{{since .IssuedAt}}</td>
+      <td class="muted nowrap">{{until .ExpiresAt}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Ни одной живой сессии.</p>{{end}}
+</section>
+<script src="{{.Prefix}}/static/passkey.js?v={{.V}}"></script>
+{{end}}

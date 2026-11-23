@@ -1,0 +1,43 @@
+{{define "actions"}}<form method="post" action="{{.Prefix}}/invites"><button class="btn primary">Создать инвайт</button></form>{{end}}
+{{define "content"}}
+<section class="card">
+  <h2>Открытые <span class="muted">{{len .Open}}</span></h2>
+  {{range .Open}}
+  <div class="invite">
+    <div class="invite-main">
+      <code class="code">{{.Code}}</code>
+      <div class="link mono">{{.Link}}</div>
+      <div class="muted small">выдал <b>{{.CreatedBy}}</b> · {{until .ExpiresAt}} ({{date .ExpiresAt}})</div>
+    </div>
+    <div class="row">
+      <button class="btn sm" data-copy="{{.Link}}">Скопировать ссылку</button>
+      <form method="post" action="{{$.Prefix}}/invites/{{.Code}}/revoke" data-confirm="Отозвать инвайт {{.Code}}?">
+        <button class="btn sm ghost">Отозвать</button>
+      </form>
+    </div>
+  </div>
+  {{else}}
+  <p class="muted">Открытых инвайтов нет. Создайте один и отправьте ссылку: она сама подставит код в форму регистрации.</p>
+  {{end}}
+</section>
+
+<section class="card table">
+  <h2>История</h2>
+  {{if .Recent}}
+  <table class="list">
+    <thead><tr><th>Код</th><th>Итог</th><th>Кто</th><th>Когда</th><th>Выдал</th></tr></thead>
+    <tbody>
+    {{range .Recent}}
+    <tr class="{{if not .Used}}dim{{end}}">
+      <td class="mono">{{.Code}}</td>
+      <td>{{if .Used}}<span class="chip ok">использован</span>{{else}}<span class="chip">истёк</span>{{end}}</td>
+      <td>{{if .UsedBy}}<b>{{.UsedBy}}</b>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="muted nowrap">{{if .UsedAt}}{{date .UsedAt}}{{else}}{{date .ExpiresAt}}{{end}}</td>
+      <td class="muted">{{.CreatedBy}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Пока никто не регистрировался.</p>{{end}}
+</section>
+{{end}}

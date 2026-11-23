@@ -1,0 +1,8 @@
+# Личное Xcode и сборки — не в репозиторий.
+xcuserdata/
+*.xcuserstate
+build/
+DerivedData/
+.DS_Store
+# Адрес своего сервера для сборки (см. Config/Local.xcconfig.example).
+Config/Local.xcconfig

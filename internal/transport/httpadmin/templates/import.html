@@ -1,0 +1,54 @@
+{{define "actions"}}<a class="btn ghost" href="{{.Prefix}}/users/{{.User.ID}}">← {{.User.DisplayName}}</a>{{end}}
+{{define "content"}}
+{{$u := .User}}
+{{with .Job}}
+<section class="card{{if not .Running}}{{if .Err}} bad{{else}} reveal{{end}}{{end}}">
+  <h2>{{if .Running}}Идёт перенос{{else if .Err}}Перенос прервался{{else}}Последний перенос{{end}}</h2>
+  <p><b>{{.What}}</b> <span class="muted">· начат {{since .Started}}{{if not .Running}}, закончен {{since .Finished}}{{end}}</span></p>
+  {{if .Running}}<p class="muted small">Обновите страницу через минуту.</p>{{end}}
+  {{if .Summary}}<p>{{.Summary}}</p>{{end}}
+  {{if .Err}}<p class="err small">{{.Err}}</p><p class="muted small">Повторный перенос безопасен: уже перенесённое не задвоится, а свои позиции человека не откатятся.</p>{{end}}
+</section>
+{{end}}
+
+<section class="card">
+  <h2>История просмотров</h2>
+  <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/import/recent"
+        data-confirm="Перенести {{$u.Login}} журнал просмотров kinopub за выбранные дни?">
+    <div>
+      <b>Журнал просмотров за последние дни</b>
+      <small>Серии с позициями и настоящими датами — «История» и «Продолжить смотреть» встанут в том порядке, в каком смотрели; сериалы из журнала — в «Слежу». Журнал общий, но остальные уже смотрят здесь, так что свежие недели — в основном тот, кто до сих пор смотрел через kinopub. Запрос на двадцать записей.</small>
+      <input name="days" type="number" min="1" max="365" value="14" required aria-label="За сколько дней" style="max-width:120px">
+    </div>
+    <button class="btn primary">Перенести</button>
+  </form>
+  <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/import/history"
+        data-confirm="Перенести {{$u.Login}} общий список «я смотрю» kinopub целиком? Все позиции получат сегодняшнюю дату.">
+    <div>
+      <b>Весь «я смотрю» с позициями</b>
+      <small>Общий список семьи за годы — в «Слежу», позиции по всем его сериям — в историю. Дат у площадки здесь нет: всё получит сегодняшнюю, порядок в «Истории» будет случайным. Запрос на каждый тайтл.</small>
+    </div>
+    <button class="btn">Перенести</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Папка закладок → «Буду смотреть»</h2>
+  {{if .FoldersErr}}
+  <p class="err small">{{.FoldersErr}}</p>
+  {{else}}
+  {{range .Folders}}
+  <form class="act" method="post" action="{{$.Prefix}}/users/{{$u.ID}}/import/folder"
+        data-confirm="Перенести папку «{{.Title}}» ({{.Count}}) в «Буду смотреть» у {{$u.Login}}?">
+    <input type="hidden" name="folder" value="{{.ID}}">
+    <input type="hidden" name="folder_name" value="{{.Title}}">
+    <div><b>{{.Title}}</b><small>{{plural .Count "тайтл" "тайтла" "тайтлов"}}</small></div>
+    <button class="btn">Перенести</button>
+  </form>
+  {{else}}
+  <p class="muted">У аккаунта kinopub нет папок закладок.</p>
+  {{end}}
+  {{end}}
+</section>
+<p class="note">Площадка только читается: в kinopub ничего не пишется. Переносы идут по одному — аккаунт площадки общий с просмотром у всей семьи.</p>
+{{end}}

@@ -1,0 +1,11 @@
+{
+  "name": "kino-web",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @kino/app dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "player:demo": "pnpm --filter @kino/player demo"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

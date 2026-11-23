@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Заставка до Android 12: фон витрины и знак по центру, без растягивания.
+     На Android 12+ система рисует свою — цвет и иконка заданы в styles.xml. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background"/>
+    <item>
+        <bitmap android:gravity="center" android:src="@drawable/splash_mark"/>
+    </item>
+</layer-list>

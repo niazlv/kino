@@ -1,0 +1,444 @@
+/* Интерфейс плеера. Стили едут вместе с пакетом: он должен работать
+   в чужом проекте, не требуя переносить куски чужой темы.
+
+   Две раскладки. Обычная — у мыши и у встроенного в страницу плеера на
+   телефоне: левый кластер, время в ряду, правый кластер. Раскладка
+   кинопаба (класс cine) — на телевизоре и у пальца во весь экран:
+   «назад», название и разделы настроек сверху, время по краям полосы,
+   центрированный ряд кнопок снизу. */
+/* isolation: слои плеера (шапка, панель, меню — z-index 4–6) спорят
+   только друг с другом. Без неё они выходили в общий слой страницы и
+   при прокрутке ложились поверх липкой шапки сайта и подсказок поиска. */
+.kp { position: relative; background: #000; border-radius: 10px; overflow: hidden; isolation: isolate; }
+.kp video { display: block; width: 100%; height: 100%; }
+.kp.idle { cursor: none; }
+.kp.idle .kp-bar, .kp.idle .kp-top, .kp.idle .kp-scrim { opacity: 0; pointer-events: none; }
+/* Кнопки шапки ловят нажатия сами по себе (сама шапка их пропускает) —
+   спрятанными они не должны перехватывать тап по кадру. */
+.kp.idle .kp-top button { pointer-events: none; }
+
+.kp-bar, .kp-top {
+  position: absolute; left: 0; right: 0; padding: 10px 14px;
+  transition: opacity .18s; color: #fff;
+}
+/* Шапка пропускает тап по кадру мимо кнопок: пустое место в ней — тот же
+   кадр, и тап туда прячет панель, как в любом другом месте. */
+.kp-top { top: 0; background: linear-gradient(rgba(0,0,0,.65), transparent); pointer-events: none; }
+.kp-top button { pointer-events: auto; }
+.kp-topline { display: flex; align-items: flex-start; gap: 12px; }
+.kp-bar { bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,.82)); }
+.kp-top, .kp-bar { z-index: 5; }
+
+/* Лёгкое затемнение всего кадра, пока видна панель: на светлой сцене
+   белые значки иначе не читаются. */
+.kp-scrim {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  pointer-events: none; transition: opacity .18s;
+  background: rgba(0,0,0,.28);
+}
+.kp.cine .kp-scrim { background: rgba(0,0,0,.22); }
+/* Раскладка кинопаба: у шапки и у нижней панели — свои плотные плашки
+   с ровным краем, а не градиент. Кнопки и надписи стоят на тёмном
+   поле при любом кадре; между плашками видео почти не тронуто. */
+.kp.cine .kp-top, .kp.cine .kp-bar { background: rgba(0,0,0,.74); }
+
+/* Подложка под открытым меню: ловит тап мимо списка и закрывает его.
+   У мыши заодно приглушает кадр — плоское меню стоит поверх видео;
+   у раскладки кинопаба кадр и так затемнён. */
+.kp-shade {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  background: rgba(0,0,0,.6); z-index: 4; animation: kp-shade .18s ease-out;
+}
+.kp.cine .kp-shade { background: transparent; animation: none; }
+@keyframes kp-shade { from { opacity: 0; } }
+
+.kp-title {
+  font: 600 14px/1.3 system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  /* Сжимается первым и обрезается многоточием: сводка справа — короткая и
+     фиксированная, а название бывает какой угодно длины. */
+  flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Кнопка «играть» на паузе — круг в центре кадра. По центру его держат
+   четыре нуля и margin: auto, а не трансформ: хозяин нажатой кнопке
+   ставит свой transform (витрина — сдвиг на пиксель), тот затирал
+   translate(-50%, -50%), круг прыгал на полразмера вправо-вниз, мышь
+   отпускалась мимо него — и нажатие не засчитывалось. Способ понятен
+   и старым движкам телевизоров, в отличие от inset. */
+.kp-center {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; margin: auto;
+  width: 96px; height: 96px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.5); border: none; cursor: pointer; color: #fff;
+  padding: 0;
+}
+.kp-center svg { width: 52px; height: 52px; filter: drop-shadow(0 2px 10px rgba(0,0,0,.5)); }
+
+/* Ожидание источника и данных — кольцо, как у кинопаба. */
+.kp-wait {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.kp-spin {
+  width: 64px; height: 64px; border-radius: 50%;
+  border: 4px solid rgba(255,255,255,.25); border-top-color: #fff;
+  animation: kp-spin .9s linear infinite;
+}
+@keyframes kp-spin { to { transform: rotate(360deg); } }
+
+.kp-row { display: flex; align-items: center; gap: 6px; }
+.kp-btn {
+  background: none; border: none; color: #fff; cursor: pointer; padding: 6px;
+  border-radius: 7px; display: grid; place-items: center; line-height: 0;
+}
+.kp-btn svg { width: 20px; height: 20px; }
+.kp-btn.on { color: #35c56a; }
+.kp-btn:disabled { opacity: .35; cursor: default; }
+/* Подсветка наведения — только там, где наводят. На телефоне :hover
+   залипает на последней нажатой кнопке, и та висела серым квадратом. */
+@media (hover: hover) {
+  .kp-btn:hover:not(:disabled) { background: rgba(255,255,255,.16); }
+}
+.kp-time { font: 12px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; opacity: .9; padding: 0 4px; white-space: nowrap; }
+.kp-spacer { flex: 1; }
+
+/* Полоса времени. Дорожка высокая, а видимая линия тонкая: попасть
+   мышью в 4 пикселя тяжело, особенно при перемотке на ходу. Полоса
+   забирает всю ширину ряда: без flex она сжималась до бегунка, и между
+   часами оставалась одна зелёная точка. */
+.kp-seekrow { display: flex; align-items: center; gap: 10px; }
+.kp-seek {
+  position: relative; height: 18px; display: flex; align-items: center; cursor: pointer;
+  flex: 1 1 auto; min-width: 0;
+  /* Тяга по полосе — наша, а не прокрутка страницы. */
+  touch-action: none;
+}
+.kp-seek-track { position: relative; height: 4px; width: 100%; border-radius: 2px; background: rgba(255,255,255,.26); }
+.kp-seek-buf { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(255,255,255,.34); border-radius: 2px; }
+.kp-seek-fill { position: absolute; top: 0; bottom: 0; left: 0; background: #35c56a; border-radius: 2px; }
+/* Заставка и титры на шкале: светлее дорожки и буфера, не зелёные — это не
+   просмотренное. Пройденную часть закрывает зелёная полоса поверх. */
+.kp-seek-seg { position: absolute; top: 0; bottom: 0; background: rgba(255, 214, 102, .85); border-radius: 2px; }
+.kp-bubble-seg { color: #ffd666; margin-right: 6px; }
+/* Бегунок виден всегда, не только под мышью: без него на полосе не найти,
+   где остановился просмотр, — зелёное сливалось с буфером. */
+.kp-seek-knob {
+  position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+  background: #35c56a; transform: translate(-50%, -50%); transition: transform .12s;
+}
+.kp-seek.active .kp-seek-knob { transform: translate(-50%, -50%) scale(1.25); }
+@media (hover: hover) {
+  .kp-seek:hover .kp-seek-knob { transform: translate(-50%, -50%) scale(1.25); }
+}
+/* Время под курсором и под пальцем при тяге. */
+.kp-bubble {
+  position: absolute; bottom: 20px; transform: translateX(-50%); padding: 4px 8px;
+  border-radius: 6px; background: rgba(18,20,26,.95); border: 1px solid rgba(255,255,255,.12);
+  color: #fff; font: 11px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums;
+  white-space: nowrap; pointer-events: none;
+}
+/* Превью кадра над временем: канвас во всю ширину пузыря. Пока кадр едет
+   (не совпал с местом под курсором) — лёгкая пульсация вместо спиннера. */
+.kp-bubble.has-thumb { padding: 4px; }
+.kp-thumb {
+  width: 168px; height: 94px; border-radius: 3px; overflow: hidden;
+  background: #000; margin-bottom: 4px;
+}
+.kp-thumb canvas { display: block; width: 100%; height: 100%; }
+.kp-thumb.load canvas { animation: kp-thumb-pulse 1.1s ease-in-out infinite; }
+@keyframes kp-thumb-pulse { 50% { opacity: .35; } }
+
+/* ---- встроенный плеер на телефоне ----
+   Та же раскладка, что у мыши, только цели под палец. ±10 из ряда
+   убраны — их делают двойной тап у края и тяга по кадру; громкость —
+   кнопками телефона. Круг «играть» меньше: окошко на полэкрана. */
+.kp.touch .kp-vol { display: none; }
+.kp.touch:not(.cine) .kp-back, .kp.touch:not(.cine) .kp-fwd { display: none; }
+.kp.touch:not(.cine) .kp-btn { padding: 9px; }
+.kp.touch:not(.cine) .kp-btn svg { width: 22px; height: 22px; }
+.kp.touch:not(.cine) .kp-bar { padding: 4px 8px 4px; }
+.kp.touch:not(.cine) .kp-top { padding: 8px 12px; }
+.kp.touch:not(.cine) .kp-center { width: 68px; height: 68px; }
+.kp.touch:not(.cine) .kp-center svg { width: 38px; height: 38px; }
+.kp.touch .kp-seek { height: 26px; }
+/* Плоское меню в невысоком окошке — во всю высоту над рядом, иначе
+   в нём помещалось три пункта. */
+.kp.touch:not(.cine) .kp-menu { top: 8px; bottom: 52px; max-height: none; }
+
+/* ---- раскладка кинопаба ---- */
+.kp.cine .kp-top {
+  padding: 10px max(16px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+}
+.kp.cine .kp-topline { align-items: center; }
+.kp.cine .kp-exit { margin-right: 4px; }
+.kp.cine .kp-exit svg { width: 26px; height: 26px; }
+.kp.cine .kp-title {
+  font: 500 16px/1.3 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .02em;
+  /* Длинное название — в две строки, как у кинопаба, и только потом
+     многоточие: одна строка обрезала его на середине слова. */
+  white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+/* Разделы настроек — надписями под названием, как у кинопаба. */
+.kp-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.kp-tab {
+  background: none; border: none; color: #fff; cursor: pointer;
+  font: 500 14px/1 system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase;
+  padding: 12px 14px; border-radius: 6px; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+.kp-tab.on { color: #35c56a; }
+@media (hover: hover) {
+  .kp-tab:hover { background: rgba(255,255,255,.12); }
+}
+.kp.cine .kp-stats { color: rgba(255,255,255,.55); font-size: 13px; line-height: 1.5; align-self: flex-start; }
+.kp.cine .kp-bar {
+  padding: 10px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+}
+.kp.cine .kp-time { font-size: 15px; opacity: .9; padding: 0; }
+.kp.cine .kp-time:first-child { min-width: 56px; text-align: right; }
+.kp.cine .kp-time:last-child { min-width: 56px; }
+.kp.cine .kp-seek { height: 32px; }
+.kp.cine .kp-seek-track { height: 3px; background: rgba(255,255,255,.3); }
+.kp.cine .kp-seek-knob { width: 16px; height: 16px; }
+/* Ряд — полоса посередине шириной с полэкрана, кнопки разнесены по ней
+   поровну: пауза всегда в центре. */
+.kp.cine .kp-row { justify-content: space-between; max-width: 560px; margin: 2px auto 0; gap: 4px; }
+.kp.cine .kp-btn { padding: 10px; }
+.kp.cine .kp-btn svg { width: 28px; height: 28px; }
+.kp.cine .kp-play svg { width: 32px; height: 32px; }
+
+/* Подсказка о перемотке двойным тапом: гаснет сама. */
+.kp-flash {
+  position: absolute; top: 0; bottom: 0; width: 36%; display: grid; place-items: center;
+  color: #fff; font: 600 15px/1 system-ui, sans-serif; text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  pointer-events: none; animation: kp-flash .7s ease-out forwards;
+}
+.kp-flash.left { left: 0; background: radial-gradient(circle at 30% 50%, rgba(255,255,255,.22), transparent 70%); }
+.kp-flash.right { right: 0; background: radial-gradient(circle at 70% 50%, rgba(255,255,255,.22), transparent 70%); }
+@keyframes kp-flash { from { opacity: 1; } 60% { opacity: 1; } to { opacity: 0; } }
+
+/* Строка хозяина поверх кадра: как идёт переключение площадки или
+   озвучки. Под шапкой, по центру, поверх плашек — и при спрятанной
+   панели тоже: итог переключения нужен, даже если панель уже погасла. */
+.kp-notice {
+  position: absolute; top: 56px; left: 0; right: 0; margin: 0 auto; z-index: 6;
+  width: max-content; max-width: calc(100% - 32px); box-sizing: border-box;
+  padding: 8px 14px; border-radius: 10px; background: rgba(0, 0, 0, .78);
+  color: #fff; font: 500 14px/1.35 system-ui, sans-serif; text-align: center;
+  pointer-events: none;
+}
+.kp.cine .kp-notice { top: 120px; }
+/* Встроенный плеер на телефоне — окошко в две сотни пикселей высотой. */
+.kp.touch:not(.cine) .kp-notice { top: 44px; padding: 6px 10px; font-size: 12px; }
+html.tv .kp-notice { font-size: 17px; top: 140px; }
+
+/* Куда перематывает тяга по кадру: время и сторона крупно в центре. */
+.kp-dragtime {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  padding: 10px 18px; border-radius: 10px; background: rgba(0, 0, 0, .6);
+  color: #fff; font: 600 20px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums;
+  pointer-events: none; white-space: nowrap;
+}
+.kp-dragtime .arrow { color: #35c56a; }
+
+/* Конец серии: что дальше и обратный отсчёт. */
+.kp-end {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  text-align: center; padding: 16px; background: rgba(0,0,0,.62); color: #fff;
+  font: 14px/1.4 system-ui, sans-serif;
+}
+.kp-end-k { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .65; }
+.kp-end-t { font-size: 17px; font-weight: 600; max-width: min(70vw, 520px); }
+.kp-end-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.kp-end-go, .kp-end-alt {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px;
+  border-radius: 999px; border: none; cursor: pointer; font: 600 14px system-ui, sans-serif;
+}
+.kp-end-go { background: #35c56a; color: #06130b; }
+.kp-end-alt { background: rgba(255,255,255,.14); color: #fff; }
+@media (hover: hover) {
+  .kp-end-go:hover { filter: brightness(1.06); }
+  .kp-end-alt:hover { background: rgba(255,255,255,.22); }
+}
+.kp-end-go svg, .kp-end-alt svg { width: 18px; height: 18px; fill: currentColor; }
+
+/* Пропуск заставки и титров: кнопка справа над панелью, как у онлайн-
+   кинотеатров. Видна и при спрятанной панели — тогда опускается к краю
+   кадра. Ставится отступами, а не трансформом: витрина двигает кнопки
+   трансформом при нажатии, и кнопка уезжала бы из-под пальца. */
+.kp-skip {
+  position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: 84px; z-index: 6;
+  color: #fff; font: 600 14px/1.3 system-ui, sans-serif;
+  transition: bottom .18s; animation: kp-skip-in .22s ease-out;
+}
+.kp.idle .kp-skip { bottom: 24px; }
+.kp.cine .kp-skip { bottom: 148px; }
+.kp.cine.idle .kp-skip { bottom: 32px; }
+/* Встроенный плеер телефона: окошко в полэкрана, панель низкая — кнопка
+   мельче и над полосой времени. */
+.kp.touch:not(.cine) .kp-skip { bottom: 80px; right: 10px; }
+.kp.touch:not(.cine).idle .kp-skip { bottom: 12px; }
+.kp.touch:not(.cine) .kp-skip-go, .kp.touch:not(.cine) .kp-skip-undo { padding: 7px 12px; font-size: 13px; }
+@keyframes kp-skip-in { from { opacity: 0; } }
+.kp-skip { display: flex; align-items: center; gap: 10px; }
+.kp-skip-go, .kp-skip-undo {
+  padding: 11px 20px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.6); background: rgba(16,16,16,.74); color: #fff;
+  font: 600 14px/1 system-ui, sans-serif; letter-spacing: .01em;
+}
+.kp-skip-undo { padding: 9px 14px; font-weight: 500; }
+.kp-skip-note { text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+@media (hover: hover) {
+  .kp-skip-go:hover, .kp-skip-undo:hover { background: #fff; color: #111; }
+}
+
+.kp-vol { display: flex; align-items: center; gap: 4px; }
+.kp-vol input { width: 0; opacity: 0; pointer-events: none; transition: width .16s, opacity .16s; }
+.kp-vol:hover input, .kp-vol input:focus { width: 74px; opacity: 1; pointer-events: auto; }
+/* Ползунок защищён от стилей приложения-хозяина: глобальное правило для
+   текстовых полей (отступы, рамка, ширина 100%) добиралось и до него, и
+   ноль с максимумом оказывались сдвинуты на ширину отступа. Специфичность
+   выше любого разумного правила «input:not(...)», а ширина не задаётся —
+   ею управляют правила выше. */
+.kp .kp-vol input[type="range"] {
+  padding: 0; margin: 0; border: 0; border-radius: 0; height: 18px;
+  background: transparent; box-shadow: none; outline: none; min-width: 0;
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+/* Ползунок рисуем сами, как полосу времени. Системный (на macOS 26 —
+   широкая белая капсула) закрывал собой конец зелёной полосы, и полная
+   громкость выглядела убавленной на треть. Заливка доходит ровно до
+   середины бегунка: --v — громкость от 0 до 1, её ставит Controls. */
+.kp-vol input::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, #35c56a calc(6px + (100% - 12px) * var(--v, 1)),
+    rgba(255,255,255,.26) 0);
+}
+.kp-vol input::-moz-range-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, #35c56a calc(6px + (100% - 12px) * var(--v, 1)),
+    rgba(255,255,255,.26) 0);
+}
+.kp-vol input::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px;
+  border: 0; border-radius: 50%; background: #35c56a;
+}
+.kp-vol input::-moz-range-thumb {
+  width: 12px; height: 12px; border: 0; border-radius: 50%; background: #35c56a;
+}
+.kp-vol input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(53,197,106,.35); }
+.kp-vol input:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(53,197,106,.35); }
+
+.kp-menu {
+  position: absolute; right: 12px; bottom: 56px; min-width: 208px; max-height: 62%;
+  overflow-y: auto; padding: 8px; border-radius: 10px;
+  /* Почти сплошной фон, размытие под ним и тень: список обязан читаться
+     на любом кадре, светлом и тёмном. */
+  background: rgba(16,18,24,.98);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,.55);
+  border: 1px solid rgba(255,255,255,.14);
+  color: #fff; font: 13px/1.4 system-ui, sans-serif;
+  z-index: 6;
+}
+.kp-menu h4 { margin: 8px 8px 4px; font-size: 11px; letter-spacing: .6px;
+  text-transform: uppercase; opacity: .55; font-weight: 600; }
+.kp-menu button {
+  display: flex; width: 100%; gap: 8px; align-items: center; text-align: left;
+  background: none; border: none; color: inherit; font: inherit;
+  padding: 7px 8px; border-radius: 7px; cursor: pointer;
+}
+@media (hover: hover) {
+  .kp-menu button:hover { background: rgba(255,255,255,.1); }
+}
+.kp-menu button.on { color: #35c56a; }
+.kp-menu .mark { width: 14px; flex: none; }
+/* Пометка пункта хозяина («не вышло», «сейчас AnimeGO.fr») — серым справа. */
+.kp-menu .kp-hint { margin-left: auto; padding-left: 14px; opacity: .5; font-size: .85em; white-space: nowrap; }
+/* Список раскладки кинопаба: прижат к своей надписи или кнопке, узкий,
+   строки под палец. Место задаётся на элементе. */
+.kp-menu.kp-pop {
+  min-width: 200px; max-width: calc(100% - 16px); width: max-content;
+  padding: 6px; border-radius: 8px; font-size: 15px;
+}
+.kp-pop button { padding: 11px 12px 11px 10px; }
+.kp-pop h4 { margin: 8px 10px 4px; font-size: 12px; }
+.kp-pop .mark { width: 18px; }
+.kp-none { padding: 11px 12px; opacity: .6; }
+
+@media (max-width: 640px) {
+  .kp-vol { display: none; }
+  .kp-menu { left: 12px; right: 12px; }
+}
+
+/* ---- форточка ----
+   «Картинка в картинке» у Android уменьшает само окно приложения, и
+   страница перекладывается в пару сотен пикселей: шапка и панель в
+   натуральную величину наезжали друг на друга и закрывали кадр целиком.
+   В такой форточке — только видео: развернуть и закрыть её дают кнопки
+   системы поверх, наши туда всё равно не помещаются. Порог по обеим
+   сторонам: телефон в развороте ниже 320, но много шире 560. */
+@media (max-width: 560px) and (max-height: 320px) {
+  .kp-top, .kp-bar, .kp-scrim, .kp-center, .kp-menu, .kp-shade,
+  .kp-end, .kp-flash, .kp-dragtime, .kp-bubble, .kp-notice, .kp-skip { display: none !important; }
+  .kp-spin { width: 28px; height: 28px; border-width: 3px; }
+}
+
+/* ---- фокус: клавиатура и пульт ---- */
+/* Панель должна быть видна тому, кто ходит по ней стрелками: кольцо на
+   кнопках, крупный бегунок на полосе, подсветка большой кнопки. */
+.kp-btn:focus-visible { background: rgba(255,255,255,.28); outline: 2px solid #fff; outline-offset: 1px; }
+.kp-tab:focus-visible { background: rgba(255,255,255,.2); outline: 2px solid #fff; outline-offset: 1px; }
+.kp-seek:focus-visible { outline: none; }
+.kp-seek:focus-visible .kp-seek-track { height: 6px; }
+.kp-seek:focus-visible .kp-seek-knob { transform: translate(-50%, -50%) scale(1.3); box-shadow: 0 0 0 4px rgba(53,197,106,.35); }
+.kp-center:focus-visible { outline: none; }
+.kp-center:focus-visible svg { transform: scale(1.12); filter: drop-shadow(0 0 14px #35c56a); }
+.kp-end-go:focus-visible, .kp-end-alt:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.kp-skip-go:focus-visible, .kp-skip-undo:focus-visible { background: #fff; color: #111; outline: none; }
+.kp-menu button:focus-visible { background: rgba(255,255,255,.16); outline: none; }
+
+/* ---- телевизор ----
+   Хозяин помечает документ классом tv. Громкость и картинка в картинке там
+   не нужны: первое делает пульт, второго на телевизоре нет. Всё крупнее —
+   смотрят с дивана, субтитры тем более. */
+html.tv .kp-vol, html.tv .kp-pip { display: none; }
+html.tv .kp-btn { padding: 8px; }
+html.tv .kp-btn svg { width: 28px; height: 28px; }
+html.tv .kp-time { font-size: 15px; }
+html.tv .kp-title { font-size: 17px; }
+html.tv .kp-menu { font-size: 16px; min-width: 300px; bottom: 68px; }
+html.tv .kp-menu button { padding: 9px 10px; }
+html.tv .kp-end-t { font-size: 22px; }
+html.tv .kp-end-go, html.tv .kp-end-alt { font-size: 17px; padding: 12px 22px; }
+html.tv .kp video::cue { font-size: 4vh; }
+/* Фокус на телевизоре — через :focus, не :focus-visible. Мыши там нет, и
+   различать их незачем; зато движки телевизоров старше 2020 года
+   :focus-visible не знают и выбрасывают правило целиком — панель без
+   единой подсветки. Каждое правило отдельной строкой: одно непонятое
+   слово в списке селекторов роняет весь список. */
+html.tv .kp-btn:focus { background: rgba(255,255,255,.28); outline: 2px solid #fff; outline-offset: 1px; }
+html.tv .kp-tab:focus { background: rgba(255,255,255,.2); outline: 2px solid #fff; outline-offset: 1px; }
+html.tv .kp-seek:focus { outline: none; }
+html.tv .kp-seek:focus .kp-seek-track { height: 6px; }
+html.tv .kp-seek:focus .kp-seek-knob { transform: translate(-50%, -50%) scale(1.3); box-shadow: 0 0 0 4px rgba(53,197,106,.35); }
+html.tv .kp-center:focus { outline: none; }
+html.tv .kp-center:focus svg { transform: scale(1.12); filter: drop-shadow(0 0 14px #35c56a); }
+html.tv .kp-end-go:focus { outline: 3px solid #fff; outline-offset: 2px; }
+html.tv .kp-end-alt:focus { outline: 3px solid #fff; outline-offset: 2px; }
+html.tv .kp-skip-go:focus { background: #fff; color: #111; outline: none; }
+html.tv .kp-skip-undo:focus { background: #fff; color: #111; outline: none; }
+html.tv .kp-skip-go, html.tv .kp-skip-undo { font-size: 18px; padding: 14px 26px; }
+html.tv .kp-menu button:focus { background: rgba(255,255,255,.16); outline: none; }
+
+/* Сводка о потоке — в углу и полупрозрачная: она для того, кто её ищет,
+   и не должна спорить с кадром. Гаснет вместе с панелью. */
+.kp-stats {
+  flex: none; margin-left: auto;
+  color: rgba(255, 255, 255, .78);
+  font-size: 11px; line-height: 1.45; text-align: right; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
+  pointer-events: none;
+}

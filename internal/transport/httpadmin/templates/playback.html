@@ -1,0 +1,35 @@
+{{define "content"}}
+<section class="card">
+  <h2>Просмотры за 30 дней <span class="muted">{{.Total}}{{if .Errors}} · <b class="err">{{.Errors}} с ошибкой</b>{{end}}</span></h2>
+  <div class="chart">
+    {{range .Bars}}
+    <div class="col" title="{{.Day}}: {{.Sessions}} просм.{{if .Errors}}, {{.Errors}} с ошибкой{{end}}">
+      <div class="bar{{if .Errors}} has-err{{end}}" style="height: {{.Pct}}%"></div>
+      <span class="lbl">{{.Label}}</span>
+    </div>
+    {{end}}
+  </div>
+</section>
+
+<section class="card table">
+  <h2>Неделя по движкам</h2>
+  {{if .Stats}}
+  <table class="list">
+    <thead><tr><th>День</th><th>Движок</th><th>Сессий</th><th>Ошибок</th><th>Ребуферов, ср.</th><th>До первого кадра, p50</th></tr></thead>
+    <tbody>
+    {{range .Stats}}
+    <tr>
+      <td class="muted nowrap">{{.Day}}</td>
+      <td class="mono">{{.ByImpl}}</td>
+      <td>{{.Sessions}}</td>
+      <td>{{if gt .Errors 0}}<b class="err">{{.Errors}}</b>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td>{{printf "%.1f" .RebufferAvg}}</td>
+      <td>{{.TTFFP50}} мс</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">За неделю просмотров не было.</p>{{end}}
+</section>
+<p class="note">Разбивка по движку не украшение: у плеера два независимых кодовых пути (hls.js и нативный HLS в iOS), и без неё жалоба «на айфоне тормозит» неотличима от проблемы сети. Истории просмотров здесь нет и не будет (ADR-0005).</p>
+{{end}}

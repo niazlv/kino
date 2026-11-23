@@ -1,0 +1,60 @@
+{{define "content"}}
+<section class="card table">
+  <h2>Синхронизация</h2>
+  <table class="list">
+    <thead><tr><th>Площадка</th><th>Состояние</th><th>Последний прогон</th><th>Синк до</th><th>Привязано</th><th>Пройдено</th><th>Ошибка</th><th></th></tr></thead>
+    <tbody>
+    {{range .Providers}}
+    <tr>
+      <td><b>{{.Name}}</b>{{if ne .Name .ProviderID}} <span class="mono muted small">{{.ProviderID}}</span>{{end}}</td>
+      <td><span class="chip {{.Status}}">{{.StatusLabel}}</span></td>
+      <td class="muted nowrap">{{if .LastRunAt}}{{since .LastRunAt}}{{else}}—{{end}}</td>
+      <td class="muted nowrap">{{if .LastSyncedAt}}{{date .LastSyncedAt}}{{else}}—{{end}}</td>
+      <td>{{.Refs}}</td>
+      <td>{{.TitlesSeen}}</td>
+      <td>{{if .Error}}<span class="err mono small">{{.Error}}</span>{{else}}<span class="muted">нет</span>{{end}}</td>
+      <td>
+        <form method="post" action="{{$.Prefix}}/providers/{{.ProviderID}}/rescan"
+              data-confirm="Заявить полный перескан {{.Name}}? Обходчик пойдёт по каталогу целиком на ближайшем проходе — это часы работы площадки.">
+          <input type="hidden" name="reason" value="пересканирование из админки">
+          <button class="btn sm ghost">Пересканировать</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="8" class="muted">Ни одна площадка не подключена.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+{{if .Auth}}
+<section class="card table">
+  <h2>Вход на площадки</h2>
+  <table class="list">
+    <thead><tr><th>Площадка</th><th>Состояние</th><th>Токен действует до</th><th>Продлён</th><th>Продление</th></tr></thead>
+    <tbody>
+    {{range .Auth}}
+    <tr>
+      <td><b>{{.Name}}</b></td>
+      <td>{{if .NeedsReauth}}<span class="chip error">нужна переавторизация</span>{{if .Reason}} <span class="err small">{{.Reason}}</span>{{end}}{{else}}<span class="chip">вход принят</span>{{end}}</td>
+      <td class="muted nowrap">{{if .ExpiresAt.IsZero}}неизвестно — узнаем по отказу{{else}}{{date .ExpiresAt}}{{end}}</td>
+      <td class="muted nowrap">{{if .RefreshedAt.IsZero}}—{{else}}{{since .RefreshedAt}}{{end}}</td>
+      <td>{{if .CanRefresh}}<span class="muted">само, заранее и по отказу</span>{{else}}<span class="chip stale">выключено</span> <span class="muted small">нет KINOPUB_REFRESH_TOKEN или ключей клиента — истечёт, и понадобится переавторизация</span>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
+<section class="stats">
+  <div class="stat"><span class="k">Тайтлов</span><span class="v">{{.Catalog.Titles}}</span></div>
+  <div class="stat"><span class="k">Серий</span><span class="v">{{.Catalog.Episodes}}</span></div>
+  <div class="stat"><span class="k">Сериалов</span><span class="v">{{.Catalog.Series}}</span></div>
+  <div class="stat"><span class="k">Фильмов</span><span class="v">{{.Catalog.Movies}}</span></div>
+  <div class="stat"><span class="k">С IMDb</span><span class="v">{{.Catalog.WithIMDB}}</span>
+    <span class="s">остальные склеятся со второй площадкой только по названию и году</span></div>
+</section>
+<p class="note">Серии догружаются при первом открытии тайтла, поэтому их число растёт не от обхода, а от просмотров. «Привязано» — элементы площадки в каталоге: во время первого обхода новой площадки это число растёт, а строка «Синк до» появится только по его окончании.</p>
+{{end}}

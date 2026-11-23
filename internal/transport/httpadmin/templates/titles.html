@@ -1,0 +1,46 @@
+{{define "content"}}
+<section class="card">
+  <form method="get" action="{{.Prefix}}/titles" class="row">
+    <input name="q" value="{{.Q}}" placeholder="название или номер тайтла" autofocus>
+    <button class="btn">Найти</button>
+  </form>
+  <p class="muted small">Тайтл собирается из площадок автоматически. Здесь видно, с каких и чем склеен, и это можно поправить.</p>
+  <nav class="row" style="gap: 8px; flex-wrap: wrap;">
+    {{range .Tabs}}
+    <a class="btn sm {{if and (not $.Q) (eq $.Kind .Kind)}}{{else}}ghost{{end}}"
+       href="{{$.Prefix}}/titles{{if ne .Kind "recent"}}?f={{.Kind}}{{end}}">
+      {{.Label}}{{if .Count}} <span class="muted">{{.Count}}</span>{{end}}
+    </a>
+    {{end}}
+  </nav>
+</section>
+<section class="card table">
+  {{if .Q}}
+    <h2>Найдено: {{.Total}}</h2>
+  {{else}}
+    <h2>{{range .Tabs}}{{if eq .Kind $.Kind}}{{.Label}}{{end}}{{end}}{{if .Total}} — {{.Total}}{{end}}</h2>
+  {{end}}
+  <table class="list">
+    <thead><tr><th>#</th><th>Тайтл</th><th>Год</th><th>Вид</th><th>Площадок</th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+    <tr>
+      <td class="mono">{{.ID}}</td>
+      <td><a href="{{$.Prefix}}/titles/{{.ID}}">{{.Title}}</a></td>
+      <td>{{if .Year}}{{.Year}}{{else}}—{{end}}</td>
+      <td class="muted">{{if eq .Kind "movie"}}фильм{{else}}сериал{{end}}</td>
+      <td>{{.Sources}}</td>
+    </tr>
+    {{else}}
+    <tr><td colspan="5" class="muted">{{if .Q}}Ничего не нашлось.{{else}}Пока пусто.{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if .NextOffset}}
+  <div class="row center" style="margin-top: 14px;">
+    <a class="btn ghost" href="{{$.Prefix}}/titles?{{if .Q}}q={{.Q}}&{{else if ne .Kind "recent"}}f={{.Kind}}&{{end}}offset={{.NextOffset}}">Ещё ↓</a>
+    <span class="muted small">показано {{.NextOffset}} из {{.Total}}</span>
+  </div>
+  {{end}}
+</section>
+{{end}}

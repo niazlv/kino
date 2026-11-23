@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>kino</title>
+<!-- Единственная локальная страница оболочки: её показывают, когда витрина
+     не пришла с сервера — сети нет, или она есть, но сервер не ответил за
+     несколько секунд (MainActivity не ждёт таймаутов Capacitor).
+
+     Это не заглушка, а приложение без сети: скачивают ровно затем, чтобы
+     смотреть без интернета, а витрина без него не грузится. Тайтлы плитками
+     с постерами, внутри — серии с кадрами, прогрессом и отметкой
+     «просмотрено»; играет встроенный плеер оболочки (PlayActivity).
+
+     Данные берутся у оболочки через kinoApp, который добавлен ко всему
+     WebView, а не к странице витрины. Картинки — /_kino/art/…, их отдаёт
+     KinoWebViewClient из личной папки приложения: кадры вынуты из самих
+     файлов, постеры скачаны заранее, пока была сеть.
+
+     Перезагружать страницу нельзя: https://localhost для Capacitor чужой
+     адрес, и он отдаёт его браузеру. Перерисовка — сама, по возврату из
+     плеера (visibilitychange) и по сигналу оболочки (kinoLibraryChanged).
+
+     Пишется без новых возможностей языка: на телевизоре бывает старый
+     WebView. -->
+<style>
+  :root { --bg: #0e1116; --panel: #171b22; --line: #262d38; --fg: #eaeef4; --muted: #8c95a6; --accent: #3ddc84; --ink: #06130b; }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 -apple-system, system-ui, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus { outline: none; }
+  /* Рамка фокуса — только для пульта: на телефоне она висела бы на
+     нажатой кнопке. :focus-visible старый WebView телевизора не знает. */
+  html.keys button:focus { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+         padding: 12px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .bar svg { width: 28px; height: 28px; flex: none; }
+  .bar b { font-size: 18px; letter-spacing: -.01em; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #2a1d1d; color: #f0a8a8; }
+  .chip.on { background: #12301f; color: var(--accent); }
+  .grow { flex: 1; }
+  .btn { font-weight: 600; padding: 10px 18px; border-radius: 10px; border: none; background: var(--accent); color: var(--ink); }
+  .btn.sm { padding: 7px 12px; font-size: 13.5px; border-radius: 8px; }
+  .ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); font-weight: 600; }
+  .ghost.danger { color: #f08b8b; }
+  main { padding: 16px 16px 48px; max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 21px; margin: 4px 0 4px; }
+  h1 .n { color: var(--muted); font-weight: 400; font-size: 15px; margin-left: 6px; }
+  h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 22px 0 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .lead { color: var(--muted); margin: 0 0 16px; font-size: 13.5px; }
+
+  .empty { max-width: 360px; margin: 56px auto 0; text-align: center; }
+  .empty .mark { width: 64px; height: 64px; margin: 0 auto 18px; display: block; }
+  .empty h1 { font-size: 18px; }
+  .empty p { color: var(--muted); margin: 0 0 20px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px; }
+  .tile { display: block; width: 100%; padding: 0; border: none; background: none; text-align: left; }
+  .poster { position: relative; display: block; width: 100%; padding-top: 150%; border-radius: 10px; overflow: hidden;
+            background: var(--panel); border: 1px solid var(--line); }
+  .poster img, .shot img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+  .ph { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 34px; font-weight: 700; color: #3a4352; }
+  .badge { position: absolute; top: 6px; right: 6px; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 12px;
+           background: rgba(14,17,22,.85); color: var(--fg); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+  .badge.done { background: var(--accent); color: var(--ink); }
+  .pbar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.45); }
+  .pbar i { display: block; height: 100%; background: var(--accent); }
+  .tname { display: block; margin-top: 7px; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tsub { display: block; color: var(--muted); font-size: 12px; }
+
+  .back { border: none; background: none; color: var(--muted); padding: 4px 0; margin-bottom: 10px; font-size: 14px; }
+  .head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 8px; }
+  .head .poster { width: 112px; padding-top: 168px; flex: none; }
+  .head .info { min-width: 0; }
+  .head h1 { margin-top: 0; }
+  .head .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+
+  .eps { display: grid; gap: 10px; }
+  /* Кнопки — строкой под кадром на всю ширину: рядом с кадром на телефоне
+     они не помещались и переносились лесенкой. */
+  .ep { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; padding: 10px; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 12px; align-items: start; }
+  .ep .acts { grid-column: 1 / -1; }
+  .shot { position: relative; width: 132px; height: 74px; border-radius: 8px; overflow: hidden; background: #0b0d11; border: none; padding: 0; }
+  .shot .ph { font-size: 20px; }
+  .shot .done { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 11px; background: var(--accent);
+                color: var(--ink); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .ep .txt { flex: 1; min-width: 0; }
+  .ep .label { font-weight: 600; font-size: 14px; }
+  .ep .sub { color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+  @media (max-width: 420px) { .shot { width: 112px; height: 63px; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <svg viewBox="0 0 64 64" aria-hidden="true">
+    <rect width="64" height="64" rx="14" fill="#3ddc84"/>
+    <path fill="#06130b" fill-rule="evenodd" d="M13 17H51A6 6 0 0 1 57 23V26.5A5.5 5.5 0 0 0 57 37.5V41A6 6 0 0 1 51 47H13A6 6 0 0 1 7 41V37.5A5.5 5.5 0 0 0 7 26.5V23A6 6 0 0 1 13 17ZM24 23L39 32L24 41ZM45.5 21h3v3h-3zM45.5 26.6h3v3h-3zM45.5 32.2h3v3h-3zM45.5 37.8h3v3h-3z"/>
+  </svg>
+  <b>kino</b>
+  <span class="chip" id="net">Нет связи</span>
+  <span class="grow"></span>
+  <button class="btn sm ghost" id="retry">Повторить</button>
+</header>
+<main id="app"></main>
+
+<script>
+  (function () {
+    var app = window.kinoApp
+    var hasLib = !!(app && typeof app.library === 'function')
+    var server = (app && typeof app.server === 'function' && app.server()) || ''
+    if (server && server.charAt(server.length - 1) !== '/') server += '/'
+    var root = document.getElementById('app')
+    var openKey = null // открытый тайтл; null — плитки
+
+    document.getElementById('retry').onclick = function () { location.replace(server || location.href) }
+    window.addEventListener('online', function () {
+      var chip = document.getElementById('net')
+      chip.textContent = 'Сеть появилась'
+      chip.className = 'chip on'
+    })
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag)
+      if (cls) e.className = cls
+      if (text != null) e.textContent = text
+      return e
+    }
+
+    function size(n) {
+      if (!(n > 0)) return ''
+      var u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'], i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)))
+      var v = n / Math.pow(1024, i)
+      return (v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i]
+    }
+
+    function plural(n, one, few, many) {
+      var a = n % 10, b = n % 100
+      return n + ' ' + (a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many)
+    }
+
+    function items() {
+      if (!hasLib) return []
+      try { return JSON.parse(app.library()) || [] } catch (e) { return [] }
+    }
+
+    // У фильма сезон и серия первые: подпись «эпизод 1» на фильме врала бы.
+    function isFilm(list) { return list.length === 1 && list[0].season <= 1 && list[0].episode <= 1 }
+
+    function groups(list) {
+      var by = {}, out = []
+      list.forEach(function (e) {
+        var k = e.titleId > 0 ? 'id' + e.titleId : 'n' + e.title
+        if (!by[k]) { by[k] = { key: k, title: e.title, eps: [], added: 0, poster: '' }; out.push(by[k]) }
+        var g = by[k]
+        g.eps.push(e)
+        g.added = Math.max(g.added, e.addedAt || 0)
+        if (!g.poster && e.poster) g.poster = e.poster
+      })
+      out.forEach(function (g) {
+        g.eps.sort(function (a, b) { return a.season - b.season || a.episode - b.episode })
+        g.film = isFilm(g.eps)
+        g.size = g.eps.reduce(function (n, e) { return n + (e.size || 0) }, 0)
+        g.left = g.eps.filter(function (e) { return !e.watched }).length
+        if (!g.poster) for (var i = 0; i < g.eps.length; i++) if (g.eps[i].frame) { g.poster = g.eps[i].frame; break }
+      })
+      // Свежескачанное — первым: его и собирались смотреть.
+      out.sort(function (a, b) { return b.added - a.added || String(a.title).localeCompare(String(b.title)) })
+      return out
+    }
+
+    // Что смотреть дальше: начатое, иначе первое непросмотренное, иначе с начала.
+    function next(g) {
+      var i
+      for (i = 0; i < g.eps.length; i++) if (!g.eps[i].watched && g.eps[i].positionMs > 0) return g.eps[i]
+      for (i = 0; i < g.eps.length; i++) if (!g.eps[i].watched) return g.eps[i]
+      return g.eps[0]
+    }
+
+    // Позицию при нуле плеер берёт из описи сам — она свежее, чем та, что
+    // была при отрисовке. Досмотренное — с начала (1 мс: ноль занят).
+    function play(e) { app.play(e.id, e.watched ? '1' : '0') }
+
+    function img(src, box, letter) {
+      if (src) {
+        var i = el('img')
+        i.alt = ''
+        i.src = src
+        i.onerror = function () { i.style.visibility = 'hidden' }
+        box.appendChild(i)
+      } else {
+        box.appendChild(el('span', 'ph', (letter || '?').charAt(0).toUpperCase()))
+      }
+    }
+
+    function epLabel(g, e) {
+      if (g.film) return 'Фильм'
+      return 'Сезон ' + e.season + ', эпизод ' + e.episode
+    }
+
+    function remains(e) {
+      if (e.watched) return 'просмотрено'
+      if (e.durationMs > 0 && e.positionMs > 0) {
+        var m = Math.max(1, Math.round((e.durationMs - e.positionMs) / 60000))
+        return 'осталось ' + m + ' мин'
+      }
+      return e.durationMs > 0 ? Math.max(1, Math.round(e.durationMs / 60000)) + ' мин' : ''
+    }
+
+    function renderEmpty() {
+      var box = el('div', 'empty')
+      box.innerHTML = document.querySelector('.bar svg').outerHTML
+      box.firstChild.setAttribute('class', 'mark')
+      box.appendChild(el('h1', null, 'Нет связи с kino'))
+      box.appendChild(el('p', null, hasLib
+        ? 'Сервер не ответил, а скачанного на этом устройстве пока нет. Нажмите «Скачать» на странице серии, пока есть интернет, — и её можно будет смотреть без сети.'
+        : 'Сервер не ответил. Проверьте интернет и попробуйте ещё раз.'))
+      var b = el('button', 'btn', 'Повторить')
+      b.onclick = function () { location.replace(server || location.href) }
+      box.appendChild(b)
+      root.appendChild(box)
+    }
+
+    function renderGrid(gs) {
+      var total = gs.reduce(function (n, g) { return n + g.size }, 0)
+      var h = el('h1', null, 'Скачанное')
+      h.appendChild(el('span', 'n', size(total)))
+      root.appendChild(h)
+      root.appendChild(el('p', 'lead', 'Нет связи с сервером. Всё, что здесь, — на устройстве и смотрится без интернета.'))
+      var grid = el('div', 'grid')
+      gs.forEach(function (g) {
+        var t = el('button', 'tile')
+        t.setAttribute('data-k', 'g:' + g.key)
+        var p = el('span', 'poster')
+        img(g.poster, p, g.title)
+        if (!g.film) {
+          p.appendChild(el('span', g.left === 0 ? 'badge done' : 'badge', g.left === 0 ? '✓' : String(g.left)))
+        } else if (g.eps[0].watched) {
+          p.appendChild(el('span', 'badge done', '✓'))
+        }
+        var n = next(g)
+        if (!n.watched && n.durationMs > 0 && n.positionMs > 0) {
+          var bar = el('span', 'pbar'), i = el('i')
+          i.style.width = Math.min(100, n.positionMs / n.durationMs * 100) + '%'
+          bar.appendChild(i)
+          p.appendChild(bar)
+        }
+        t.appendChild(p)
+        t.appendChild(el('span', 'tname', g.title))
+        t.appendChild(el('span', 'tsub', (g.film ? 'Фильм' : plural(g.eps.length, 'серия', 'серии', 'серий')) + ' · ' + size(g.size)))
+        t.onclick = function () { openKey = g.key; render(); window.scrollTo(0, 0); focusFirst() }
+        grid.appendChild(t)
+      })
+      root.appendChild(grid)
+    }
+
+    function renderTitle(g) {
+      var back = el('button', 'back', '‹ Скачанное')
+      back.setAttribute('data-k', 'back')
+      back.onclick = function () { openKey = null; render(); focusFirst() }
+      root.appendChild(back)
+
+      var head = el('div', 'head')
+      var p = el('span', 'poster')
+      img(g.poster, p, g.title)
+      head.appendChild(p)
+      var info = el('div', 'info')
+      info.appendChild(el('h1', null, g.title))
+      info.appendChild(el('div', 'meta', (g.film ? 'Фильм' : plural(g.eps.length, 'серия', 'серии', 'серий') +
+        (g.left ? ' · не просмотрено ' + g.left : ' · всё просмотрено')) + ' · ' + size(g.size)))
+      var n = next(g)
+      var go = el('button', 'btn', n.watched ? 'Смотреть сначала'
+        : (n.positionMs > 0 ? 'Продолжить' : 'Смотреть') + (g.film ? '' : ' · S' + n.season + 'E' + n.episode))
+      go.setAttribute('data-k', 'go')
+      go.onclick = function () { play(n) }
+      info.appendChild(go)
+      head.appendChild(info)
+      root.appendChild(head)
+
+      var season = null
+      var seasons = {}
+      g.eps.forEach(function (e) { seasons[e.season] = 1 })
+      var many = Object.keys(seasons).length > 1
+      var list = null
+      g.eps.forEach(function (e) {
+        if (!list || (many && e.season !== season)) {
+          if (!g.film) root.appendChild(el('h2', null, many ? 'Сезон ' + e.season : 'Серии'))
+          list = el('div', 'eps')
+          root.appendChild(list)
+          season = e.season
+        }
+        var row = el('div', 'ep')
+        var shot = el('button', 'shot')
+        shot.setAttribute('aria-label', 'Смотреть: ' + epLabel(g, e))
+        shot.setAttribute('data-k', 'shot:' + e.id)
+        img(e.frame || g.poster, shot, String(e.episode))
+        if (e.watched) shot.appendChild(el('span', 'done', '✓'))
+        if (!e.watched && e.durationMs > 0 && e.positionMs > 0) {
+          var bar = el('span', 'pbar'), i = el('i')
+          i.style.width = Math.min(100, e.positionMs / e.durationMs * 100) + '%'
+          bar.appendChild(i)
+          shot.appendChild(bar)
+        }
+        shot.onclick = function () { play(e) }
+        row.appendChild(shot)
+
+        var txt = el('div', 'txt')
+        // Сезон уже в заголовке над списком — в строке только номер.
+        txt.appendChild(el('div', 'label', g.film ? 'Фильм' : 'Эпизод ' + e.episode))
+        txt.appendChild(el('div', 'sub', [size(e.size), remains(e)].filter(Boolean).join(' · ')))
+        var acts = el('div', 'acts')
+        var watch = el('button', 'btn sm', 'Смотреть')
+        watch.setAttribute('data-k', 'play:' + e.id)
+        watch.onclick = function () { play(e) }
+        acts.appendChild(watch)
+        var mark = el('button', 'btn sm ghost', e.watched ? 'Не просмотрено' : 'Просмотрено')
+        mark.setAttribute('data-k', 'mark:' + e.id)
+        mark.onclick = function () { app.setWatched(e.id, !e.watched); render() }
+        acts.appendChild(mark)
+        var del = el('button', 'btn sm ghost danger', 'Стереть')
+        del.setAttribute('data-k', 'del:' + e.id)
+        del.onclick = function () {
+          if (!confirm('Стереть «' + g.title + '» — ' + epLabel(g, e).toLowerCase() + ' (' + size(e.size) + ')?')) return
+          if (app.remove(e.id) !== '1') alert('Файл не удалось стереть')
+          render()
+        }
+        acts.appendChild(del)
+        row.appendChild(txt)
+        row.appendChild(acts)
+        list.appendChild(row)
+      })
+    }
+
+    function render() {
+      var focused = document.activeElement && document.activeElement.getAttribute('data-k')
+      var y = window.scrollY
+      root.textContent = ''
+      var gs = groups(items())
+      var g = null
+      for (var i = 0; i < gs.length; i++) if (gs[i].key === openKey) g = gs[i]
+      if (!g) openKey = null // тайтл стёрли целиком — назад к плиткам
+      if (!gs.length) renderEmpty()
+      else if (g) renderTitle(g)
+      else renderGrid(gs)
+      window.scrollTo(0, y)
+      if (focused) {
+        var again = root.querySelector('[data-k="' + focused.replace(/"/g, '') + '"]')
+        if (again) again.focus()
+      }
+    }
+
+    // Фокус ставим только при пульте: на телефоне он ни к чему.
+    var keys = / kino-tv/.test(navigator.userAgent)
+    function useKeys() {
+      keys = true
+      document.documentElement.className = 'keys'
+    }
+    if (keys) useKeys()
+
+    function focusFirst() {
+      if (!keys) return
+      var f = root.querySelector('[data-k="go"]') || root.querySelector('.tile') || root.querySelector('button')
+      if (f) f.focus()
+    }
+
+    // «Назад» оболочки: из тайтла — к плиткам, а не из приложения.
+    window.kinoBack = function () {
+      if (openKey === null) return false
+      openKey = null
+      render()
+      focusFirst()
+      return true
+    }
+
+    // Пульт: стрелки двигают фокус к ближайшей кнопке в ту сторону. На
+    // телефоне стрелок нет, и это ничего не меняет.
+    document.addEventListener('keydown', function (ev) {
+      var dir = { 37: 'l', 38: 'u', 39: 'r', 40: 'd' }[ev.keyCode]
+      if (!dir) return
+      if (!keys) useKeys()
+      var all = Array.prototype.slice.call(document.querySelectorAll('button'))
+      var cur = document.activeElement
+      if (!cur || all.indexOf(cur) < 0) { focusFirst(); ev.preventDefault(); return }
+      var a = cur.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2
+      var best = null, bestD = Infinity
+      all.forEach(function (b) {
+        if (b === cur) return
+        var r = b.getBoundingClientRect()
+        if (!r.width) return
+        var bx = r.left + r.width / 2, by = r.top + r.height / 2, dx = bx - ax, dy = by - ay
+        var ok = dir === 'l' ? dx < -2 : dir === 'r' ? dx > 2 : dir === 'u' ? dy < -2 : dy > 2
+        if (!ok) return
+        var d = dir === 'l' || dir === 'r' ? Math.abs(dx) + Math.abs(dy) * 3 : Math.abs(dy) + Math.abs(dx) * 3
+        if (d < bestD) { bestD = d; best = b }
+      })
+      if (best) { best.focus(); best.scrollIntoView({ block: 'nearest' }); ev.preventDefault() }
+    })
+
+    render()
+    focusFirst()
+    // Вернулись из плеера: позиция и «просмотрено» в описи уже другие.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') render()
+    })
+    // Оболочка нашла старые файлы, нарезала кадры или докачала постеры.
+    window.kinoLibraryChanged = render
+  })()
+</script>
+</body>
+</html>

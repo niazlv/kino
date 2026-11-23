@@ -1,0 +1,21 @@
+{{define "error"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{{.Code}} · kino admin</title>
+<link rel="stylesheet" href="{{.Prefix}}/static/admin.css?v={{.V}}">
+</head>
+<body class="login-body">
+<main class="login">
+  <div class="card login-form">
+    <h1><span class="muted">{{.Code}}</span> {{.Text}}</h1>
+    <div class="row">
+      <a class="btn" href="{{.Prefix}}/">В админку</a>
+      <a class="btn ghost" href="/">К витрине</a>
+    </div>
+  </div>
+</main>
+</body>
+</html>{{end}}

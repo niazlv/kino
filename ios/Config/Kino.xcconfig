@@ -1,0 +1,11 @@
+// Настройки сборки приложения, общие для Debug и Release.
+//
+// KINO_URL — сервер kino platform «по умолчанию», вшитый в сборку (ключ
+// KinoServerURL в Info.plist, см. ServerConfig). Пусто — сервера по умолчанию
+// нет: при первом запуске приложение просит указать адрес своего сервера.
+// Свой адрес задают в Config/Local.xcconfig (не в git), образец —
+// Local.xcconfig.example. В xcconfig «//» — начало комментария, поэтому
+// адрес пишется как https:/$()/kino.example.org.
+KINO_URL =
+
+#include? "Local.xcconfig"

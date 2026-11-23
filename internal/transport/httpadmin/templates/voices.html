@@ -1,0 +1,101 @@
+{{define "actions"}}<form method="post" action="{{.Prefix}}/voices/learn"><input type="hidden" name="q" value="{{.Q}}"><button class="btn ghost">Свести по транслиту сейчас</button></form>{{end}}
+
+{{define "studio"}}<b>{{.Title}}</b>{{if .Others}} <span class="muted small">также {{range $i, $t := .Others}}{{if $i}}, {{end}}«{{$t}}»{{end}}</span>{{end}}
+<br><span class="muted small">{{.Names}} · {{plural .Hits "раз" "раза" "раз"}}{{if .Link}} · <a href="{{.Link}}">пример</a>{{end}} · <span class="mono">{{.Key}}</span></span>{{end}}
+
+{{define "content"}}
+<section class="card">
+  <form method="get" action="{{.Prefix}}/voices" class="row">
+    <input name="q" value="{{.Q}}" placeholder="студия — как её пишет любая площадка">
+    <button class="btn">Найти</button>
+  </form>
+  <p class="muted small">Площадки пишут одну озвучку по-разному. Вид без студии — «DUB», «Дублированный», «Многоголосый закадровый» — сводится сам, по словам подписи. Студии под разными именами сводит таблица ниже: что сходится по транслиту («Мега-Аниме» = «Mega-Anime»), склеивается само, остальное решаете вы — по подсказкам или вручную. Склейка сразу меняет меню озвучек в плеере и то, куда он уходит, когда площадка тормозит.</p>
+</section>
+
+<section class="card table">
+  <h2>Похожие — одна студия?</h2>
+  <table class="list">
+    <thead><tr><th>Чаще встречается</th><th>Реже</th><th>Чем похожи</th><th></th></tr></thead>
+    <tbody>
+    {{range .Suggestions}}
+    <tr>
+      <td>{{template "studio" .A}}</td>
+      <td>{{template "studio" .B}}</td>
+      <td class="muted small">{{.Why}}</td>
+      <td class="nowrap">
+        <form method="post" action="{{$.Prefix}}/voices/merge" class="row">
+          <input type="hidden" name="from" value="{{.B.Key}}"><input type="hidden" name="to" value="{{.A.Key}}">
+          <input type="hidden" name="q" value="{{$.Q}}">
+          <button class="btn sm primary">Склеить в «{{.A.Title}}»</button>
+        </form>
+        <form method="post" action="{{$.Prefix}}/voices/merge" class="row">
+          <input type="hidden" name="from" value="{{.A.Key}}"><input type="hidden" name="to" value="{{.B.Key}}">
+          <input type="hidden" name="q" value="{{$.Q}}">
+          <button class="btn sm ghost">…или в «{{.B.Title}}»</button>
+        </form>
+        <form method="post" action="{{$.Prefix}}/voices/reject" class="row">
+          <input type="hidden" name="a" value="{{.A.Key}}"><input type="hidden" name="b" value="{{.B.Key}}">
+          <input type="hidden" name="q" value="{{$.Q}}">
+          <button class="btn sm ghost">Разные</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="4" class="muted">{{if .Seen}}Похожих написаний нет.{{else}}Написаний пока нет: они копятся, когда кто-то открывает серию, — загляните позже.{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Склеить вручную</h2>
+  <form method="post" action="{{.Prefix}}/voices/merge" class="newuser">
+    <label>Написание<input name="from" placeholder="AniLiberty" required></label>
+    <label>Это та же студия, что<input name="to" placeholder="AniLibria" required></label>
+    <label>Почему<input name="note" placeholder="переименовалась"></label>
+    <input type="hidden" name="q" value="{{.Q}}">
+    <button class="btn primary">Склеить</button>
+  </form>
+  <p class="muted small">Пишите, как пишет площадка: регистр, пробелы и точки не важны. Главной станет студия справа — её имя и останется в меню.</p>
+</section>
+
+<section class="card table">
+  <h2>Склейки{{if .Aliases}} — {{len .Aliases}}{{end}}</h2>
+  <table class="list">
+    <thead><tr><th>Написание</th><th>Студия</th><th>Кто</th><th>Когда</th><th></th></tr></thead>
+    <tbody>
+    {{range .Aliases}}
+    <tr>
+      <td><b>{{.FromTitle}}</b><br><span class="mono muted small">{{.From}}</span></td>
+      <td>{{.ToTitle}}<br><span class="mono muted small">{{.To}}</span></td>
+      <td>{{if eq .Origin "auto"}}<span class="chip stale">по транслиту</span>{{else}}<span class="chip">вручную</span>{{end}}{{if .Note}}<br><span class="muted small">{{.Note}}</span>{{end}}</td>
+      <td class="muted nowrap">{{since .CreatedAt}}</td>
+      <td>
+        <form method="post" action="{{$.Prefix}}/voices/split"
+              data-confirm="Разъединить «{{.FromTitle}}» и «{{.ToTitle}}»? Обучение эту пару больше не склеит.">
+          <input type="hidden" name="from" value="{{.From}}"><input type="hidden" name="q" value="{{$.Q}}">
+          <button class="btn sm ghost">Разъединить</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="5" class="muted">Склеек нет.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card table">
+  <h2>{{if .Q}}Найдено{{else}}Чаще всего{{end}}</h2>
+  <table class="list">
+    <thead><tr><th>Студия</th></tr></thead>
+    <tbody>
+    {{range .Studios}}
+    <tr><td>{{template "studio" .}}</td></tr>
+    {{else}}
+    <tr><td class="muted">{{if .Q}}Ничего не нашлось.{{else}}Пока пусто.{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

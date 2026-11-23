@@ -1,0 +1,48 @@
+{{define "factor"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0f1216">
+<title>Подтверждение · kino admin</title>
+<link rel="icon" href="{{.Prefix}}/static/icon.svg?v={{.V}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Prefix}}/static/admin.css?v={{.V}}">
+</head>
+<body class="login-body">
+<main class="login">
+  <a class="brand big" href="/">
+    <span class="mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path fill-rule="evenodd" d="M13 17H51A6 6 0 0 1 57 23V26.5A5.5 5.5 0 0 0 57 37.5V41A6 6 0 0 1 51 47H13A6 6 0 0 1 7 41V37.5A5.5 5.5 0 0 0 7 26.5V23A6 6 0 0 1 13 17ZM24 23L39 32L24 41ZM45.5 21h3v3h-3zM45.5 26.6h3v3h-3zM45.5 32.2h3v3h-3zM45.5 37.8h3v3h-3z"/></svg></span>
+    <span class="brand-name">kino <em>admin</em></span>
+  </a>
+  <div class="card login-form">
+    <h1>{{if .HasTOTP}}Код из приложения{{else}}Подтвердите ключом{{end}}</h1>
+    <p class="muted small left">Вы вошли как <b>{{.Login}}</b>.{{if .HasTOTP}} Откройте аутентификатор и введите текущий код.{{end}}</p>
+    {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+    {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+    {{if .HasPasskeys}}
+    <button type="button" class="btn {{if not .HasTOTP}}primary {{end}}wide" hidden data-passkey="elevate"
+            data-begin="{{.Prefix}}/factor/passkey/begin" data-finish="{{.Prefix}}/factor/passkey/finish"
+            data-next="{{.Next}}">
+      Подтвердить passkey
+    </button>
+    <p class="err small" data-passkey-error hidden></p>
+    {{end}}
+    {{if .HasTOTP}}
+    <form method="post" action="{{.Prefix}}/factor" autocomplete="off" class="stack">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label>
+        <span>Шесть цифр</span>
+        <input name="code" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" placeholder="123 456" required autofocus>
+      </label>
+      <button class="btn primary wide">Подтвердить</button>
+    </form>
+    {{end}}
+    <form method="post" action="{{.Prefix}}/logout" class="row center" style="margin-top:0">
+      <button class="btn ghost sm">Это не я, выйти</button>
+    </form>
+  </div>
+</main>
+<script src="{{.Prefix}}/static/passkey.js?v={{.V}}"></script>
+</body>
+</html>{{end}}

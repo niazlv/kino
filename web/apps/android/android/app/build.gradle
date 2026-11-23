@@ -1,0 +1,95 @@
+apply plugin: 'com.android.application'
+
+// Ключ подписи релиза лежит вне android/ (../keystore) и в git не попадает.
+// Без него релиз собирается неподписанным и на телефон не встанет — это
+// нарочно: подписать чужим ключом хуже, чем не собрать.
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('../keystore/keystore.properties')
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+
+android {
+    namespace = "ru.sorewa.kino"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "ru.sorewa.kino"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 9
+        versionName "0.1.8"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (keystoreFile.exists()) {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+    // Утилита kinopub и ffmpeg лежат в APK как «библиотеки» (единственный
+    // способ запускать исполняемые файлы на Android) и должны быть
+    // распакованы на диск при установке — иначе их нельзя выполнить.
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+    }
+    buildTypes {
+        // Стенд живёт по http (KINO_URL=http://10.0.2.2:5173): открытый
+        // трафик разрешён только отладочной сборке, релиз ходит на https.
+        debug {
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
+            if (keystoreFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "androidx.media3:media3-exoplayer:$media3Version"
+    implementation "androidx.media3:media3-ui:$media3Version"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+// iCloud синхронизирует ~/Documents и, пока `cap sync` переписывает
+// res/xml/config.xml, оставляет рядом копии «config 2.xml». Пробел в имени
+// ресурса валит сборку, поэтому такие копии убираются перед ней.
+tasks.register('dropStrayResources', Delete) {
+    delete fileTree('src/main/res/xml') { include 'config *.xml' }
+}
+preBuild.dependsOn dropStrayResources
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

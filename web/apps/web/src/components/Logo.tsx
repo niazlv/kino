@@ -1,0 +1,14 @@
+/**
+ * Знак приложения: билет с кнопкой «играть». Плашку даёт класс .dot, глиф
+ * рисуется цветом текста, а его геометрия — та же, что у фавикона и иконки
+ * на телефоне (docs/design/icon/gen.py): знак нигде не расходится.
+ */
+export function Mark({ className = 'dot' }: { className?: string }) {
+  return (
+    <span className={className} aria-hidden>
+      <svg viewBox="0 0 64 64">
+        <path fillRule="evenodd" d="M13 17H51A6 6 0 0 1 57 23V26.5A5.5 5.5 0 0 0 57 37.5V41A6 6 0 0 1 51 47H13A6 6 0 0 1 7 41V37.5A5.5 5.5 0 0 0 7 26.5V23A6 6 0 0 1 13 17ZM24 23L39 32L24 41ZM45.5 21h3v3h-3zM45.5 26.6h3v3h-3zM45.5 32.2h3v3h-3zM45.5 37.8h3v3h-3z" />
+      </svg>
+    </span>
+  )
+}

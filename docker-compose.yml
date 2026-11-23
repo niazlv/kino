@@ -1,0 +1,108 @@
+# Локальное развёртывание целиком на этой машине.
+# Один compose в корне проекта, как и договаривались.
+#
+# Контекст сборки — сам репозиторий (публичная сборка ядра). Полная сборка
+# с площадками идёт из родительского каталога, где рядом лежит
+# kinopub-downloader: KINO_BUILD_CONTEXT=.. и KINO_SRC=<каталог проекта>
+# (make up и deploy.sh задают их сами, см. deploy/Dockerfile).
+name: kino
+
+x-build: &build
+  context: ${KINO_BUILD_CONTEXT:-.}
+  dockerfile: ${KINO_SRC:-.}/deploy/Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kino
+      POSTGRES_PASSWORD: kino
+      POSTGRES_DB: kino
+    ports: ["55432:5432"]        # наружу — чтобы ходить psql'ем с хоста
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kino"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no   # кеш, не хранилище
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  # Схему меняет явный шаг, а не побочный эффект старта core.
+  migrate:
+    build: {<<: *build, args: {CMD: migrate, SRC: "${KINO_SRC:-.}"}}
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  core:
+    build: {<<: *build, args: {CMD: core, SRC: "${KINO_SRC:-.}", LORDFILM_ALLOHA_DEFAULT_TOKEN: "${LORDFILM_ALLOHA_DEFAULT_TOKEN:-}"}}
+    env_file: .env
+    # Кеш постеров и кадров. На диске, а не в памяти: их тысячи, и
+    # браузерный кеш у каждого свой — другому пользователю он не помогает.
+    # kpauth — пара токенов kinopub, общая с обходчиком: refresh-токен
+    # одноразовый, и продлевать его должен кто-то один, а второй — брать
+    # продлённое из файла. Том переживает пересоздание контейнеров.
+    volumes: [artcache:/var/cache/kino/art, kpauth:/var/lib/kino/kinopub]
+    environment:
+      KINOPUB_TOKEN_FILE: /var/lib/kino/kinopub/token.json
+    ports:
+      - "8080:8080"              # публичный API
+      - "127.0.0.1:8081:8081"    # админка напрямую (/admin/); обычный путь — через caddy
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  gateway:
+    build: {<<: *build, args: {CMD: gateway, SRC: "${KINO_SRC:-.}"}}
+    env_file: .env
+    ports: ["8082:8082"]
+    # Кеш сегментов. Мегабайтные файлы, поэтому потолок задаётся явно
+    # (SEGMENT_CACHE_MB) и вытесняются самые давно не спрашиваемые.
+    volumes: [segcache:/var/cache/kino/segments]
+    depends_on:
+      redis: {condition: service_healthy}
+    # Байты тянет сам шлюз браузерным транспортом, а не nginx: тот работает
+    # поверх OpenSSL и предъявит CDN отпечаток, который душат (ADR-0003).
+
+  # Собирает фронтенд в статику и кладёт в общий том для caddy.
+  web:
+    build:
+      context: ${KINO_BUILD_CONTEXT:-.}
+      dockerfile: ${KINO_SRC:-.}/deploy/web.Dockerfile
+      args: {SRC: "${KINO_SRC:-.}"}
+    volumes: [webroot:/srv/web]
+
+  # Единая точка входа. Node из пути видео убран: preview-сервер Vite
+  # захлёбывался на сегментах по 3-4 МБ и блокировал очередь запросов.
+  caddy:
+    image: caddy:2-alpine
+    ports: ["5173:5173"]
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - webroot:/srv/web:ro
+      # APK и version.json для самообновления приложения; локально — для
+      # проверки оболочки против стенда, на сервере путь переопределён.
+      - ./deploy/apk:/srv/apk:ro
+      - caddydata:/data
+    depends_on: [core, gateway, web]
+
+  crawler:
+    build: {<<: *build, args: {CMD: crawler, SRC: "${KINO_SRC:-.}", LORDFILM_ALLOHA_DEFAULT_TOKEN: "${LORDFILM_ALLOHA_DEFAULT_TOKEN:-}"}}
+    env_file: .env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    # Хранилище утилиты шифруется ключом машины и внутри контейнера
+    # не расшифруется — токен приезжает через .env (`make kinopub-token`),
+    # а продлённый живёт в томе kpauth, общем с core.
+    volumes: [kpauth:/var/lib/kino/kinopub]
+    environment:
+      KINOPUB_TOKEN_FILE: /var/lib/kino/kinopub/token.json
+
+volumes: {pgdata: {}, artcache: {}, segcache: {}, webroot: {}, caddydata: {}, kpauth: {}}

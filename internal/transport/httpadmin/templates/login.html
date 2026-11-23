@@ -1,0 +1,42 @@
+{{define "login"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0f1216">
+<title>Вход · kino admin</title>
+<link rel="icon" href="{{.Prefix}}/static/icon.svg?v={{.V}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Prefix}}/static/admin.css?v={{.V}}">
+</head>
+<body class="login-body">
+<main class="login">
+  <a class="brand big" href="/">
+    <span class="mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path fill-rule="evenodd" d="M13 17H51A6 6 0 0 1 57 23V26.5A5.5 5.5 0 0 0 57 37.5V41A6 6 0 0 1 51 47H13A6 6 0 0 1 7 41V37.5A5.5 5.5 0 0 0 7 26.5V23A6 6 0 0 1 13 17ZM24 23L39 32L24 41ZM45.5 21h3v3h-3zM45.5 26.6h3v3h-3zM45.5 32.2h3v3h-3zM45.5 37.8h3v3h-3z"/></svg></span>
+    <span class="brand-name">kino <em>admin</em></span>
+  </a>
+  <div class="card login-form">
+    <h1>Вход в админку</h1>
+    {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+    <button type="button" class="btn primary wide" hidden data-passkey="login"
+            data-begin="{{.Prefix}}/login/passkey/begin" data-finish="{{.Prefix}}/login/passkey/finish">
+      Войти по passkey
+    </button>
+    <p class="err small" data-passkey-error hidden></p>
+    <form method="post" action="{{.Prefix}}/login" autocomplete="on" class="stack">
+      <label>
+        <span>Логин</span>
+        <input name="login" value="{{.Login}}" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <label>
+        <span>Пароль</span>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn wide">Войти с паролем</button>
+    </form>
+    <p class="muted small">После пароля — код из приложения или ключ. Попытки входа ограничены.</p>
+  </div>
+</main>
+<script src="{{.Prefix}}/static/passkey.js?v={{.V}}"></script>
+</body>
+</html>{{end}}

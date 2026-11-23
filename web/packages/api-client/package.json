@@ -1,0 +1,8 @@
+{
+  "name": "@kino/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "Генерируется из api/openapi/user.v1.yaml. Плеер сюда НЕ зависит.",
+  "exports": { ".": "./src/index.ts" }
+}

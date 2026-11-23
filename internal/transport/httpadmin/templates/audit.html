@@ -1,0 +1,48 @@
+{{define "content"}}
+<section class="card">
+  <form method="get" action="{{.Prefix}}/audit" class="row" style="flex-wrap: wrap; gap: 8px;">
+    <select name="actor">
+      <option value="">Кто угодно</option>
+      {{$f := .F}}
+      {{range .Users}}<option value="{{.ID}}" {{if eq .ID $f.Actor}}selected{{end}}>{{.Login}}</option>{{end}}
+    </select>
+    <select name="action">
+      <option value="">Любое действие</option>
+      {{range .Actions}}<option value="{{.}}" {{if eq . $f.Action}}selected{{end}}>{{action .}}</option>{{end}}
+    </select>
+    <button class="btn sm">Показать</button>
+    {{if or $f.Actor $f.Action}}<a class="btn sm ghost" href="{{.Prefix}}/audit">Сбросить</a>{{end}}
+  </form>
+</section>
+<section class="card table">
+  {{if .Audit}}
+  <table class="list audit">
+    <thead><tr><th>Когда</th><th>Кто</th><th>Что</th><th>Объект</th><th>Причина</th><th></th></tr></thead>
+    <tbody>
+    {{range .Audit}}
+    <tr>
+      <td class="muted nowrap" title="{{date .CreatedAt}}">{{since .CreatedAt}}</td>
+      <td><b>{{.ActorLogin}}</b></td>
+      <td>{{action .Action}}</td>
+      <td class="mono">{{.Target}}</td>
+      <td class="muted">{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
+      <td class="r">
+        {{if or .Before .After}}
+        <details>
+          <summary class="btn sm ghost">детали</summary>
+          <div class="diff">
+            {{if .Before}}<div><span class="muted small">до</span><pre>{{pretty .Before}}</pre></div>{{end}}
+            {{if .After}}<div><span class="muted small">после</span><pre>{{pretty .After}}</pre></div>{{end}}
+          </div>
+        </details>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Пусто — либо журнал ещё не писался, либо фильтр ничего не поймал.</p>{{end}}
+</section>
+{{if .NextURL}}<div class="row center"><a class="btn" href="{{.NextURL}}">Старше →</a></div>{{end}}
+<p class="note">Журнал хранится два года, потом подрезается. Действие с точкой — группа: выберите «правка привязок», чтобы увидеть все.</p>
+{{end}}

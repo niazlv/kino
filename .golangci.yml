@@ -1,0 +1,69 @@
+version: "2"
+
+linters:
+  enable: [depguard, errcheck, govet, ineffassign, staticcheck, unused]
+
+  settings:
+    depguard:
+      rules:
+        # ── Слой 1: domain. Ноль зависимостей: ни от слоёв выше, ни от инфраструктуры.
+        # Это то, что делает бизнес-логику тестируемой без БД и переносимой.
+        domain:
+          files: ["**/internal/domain/**"]
+          deny:
+            - pkg: github.com/niazleushkin/kino/internal/app
+              desc: "domain не знает про use cases — зависимости смотрят внутрь"
+            - pkg: github.com/niazleushkin/kino/internal/adapter
+              desc: "domain не знает про инфраструктуру"
+            - pkg: github.com/niazleushkin/kino/internal/transport
+              desc: "domain не знает про транспорт"
+            - pkg: github.com/niazleushkin/kino/internal/platform
+              desc: "domain не знает про конфиг/логгер/пул соединений"
+            - pkg: github.com/jackc/pgx
+              desc: "драйвер БД в domain — протечка слоя"
+            - pkg: net/http
+              desc: "HTTP в domain — протечка слоя"
+
+        # ── Слой 2: app (use cases). Знает domain и свои порты. Не знает реализаций.
+        app:
+          files: ["**/internal/app/**"]
+          deny:
+            - pkg: github.com/niazleushkin/kino/internal/adapter
+              desc: "use case зависит от интерфейса-порта, а не от postgres/redis/grpc"
+            - pkg: github.com/niazleushkin/kino/internal/transport
+              desc: "use case не знает, кто его вызвал"
+            - pkg: github.com/jackc/pgx
+              desc: "SQL живёт в adapter/postgres"
+            - pkg: github.com/redis/go-redis
+              desc: "Redis живёт в adapter/redis"
+
+        # ── pkg/ — публикуемые библиотеки. Ноль знания о домене.
+        # Правило, которое не даёт pkg/ стать второй свалкой.
+        pkg-is-generic:
+          files: ["**/pkg/**"]
+          deny:
+            - pkg: github.com/niazleushkin/kino/internal
+              desc: "pkg/ должен уезжать в отдельный репозиторий как есть"
+
+        # ── gateway не знает провайдеров. Инвариант из ADR-0002.
+        gateway-knows-no-providers:
+          files: ["**/cmd/gateway/**", "**/internal/transport/mediahttp/**", "**/internal/adapter/upstream/**"]
+          deny:
+            - pkg: github.com/niazleushkin/kino/internal/gen/kino/provider
+              desc: "gateway зависит от схемы тикета, а не от провайдеров (ADR-0002)"
+            - pkg: github.com/niazleushkin/kino/internal/adapter/providers
+              desc: "провайдерский код в gateway = добавление платформы потребует его передеплоя"
+            - pkg: github.com/niazleushkin/kino/providers
+              desc: "провайдерский код в gateway = добавление платформы потребует его передеплоя"
+
+        # ── Ядро не знает площадок (ADR-0018). Площадки — providers/, будущий
+        # приватный репозиторий; ядро встречается с ними только в
+        # cmd/*/providers.go. Транзитивно это ловит scripts/check-boundaries.sh.
+        core-knows-no-providers:
+          files: ["**/internal/**", "**/pkg/**"]
+          deny:
+            - pkg: github.com/niazleushkin/kino/providers
+              desc: "ядро не знает площадок: роль площадки — поле source.Spec, а не импорт (ADR-0018)"
+
+formatters:
+  enable: [gofmt, goimports]

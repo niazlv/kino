@@ -1,0 +1,77 @@
+# Единая точка входа: статика фронтенда и маршрутизация к сервисам.
+#
+# Node из пути видео убран сознательно. Раньше всё шло через прокси Vite —
+# инструмент разработки, а не медиа-прокси: на сегментах по 3-4 МБ он
+# захлёбывался и блокировал остальные запросы в очереди. Мастер-плейлист,
+# который шлюз отдаёт за 0.16с, доходил до браузера за 49.
+#
+# Один origin обязателен: сессионная cookie SameSite=Lax на другой порт
+# не поедет, а нативный HLS в iOS не подставит к сегментам заголовки.
+
+{
+	# Адреса клиентов приходят от nginx впереди. Без доверия к нему Caddy
+	# заменил бы X-Forwarded-For адресом самого nginx, и лимит попыток входа
+	# в админку считал бы весь интернет одним адресом.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:5173 {
+	encode gzip
+
+	# Медиа — сразу в шлюз, без буферизации: сегменты крупные, и держать
+	# их целиком в памяти прокси незачем.
+	handle /stream/* {
+		reverse_proxy gateway:8082 {
+			flush_interval -1
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy core:8080
+	}
+
+	# Ссылки-разрешения. Отдельно от /api, потому что это адреса для
+	# человека: их копируют в переписку и в терминал.
+	handle /d/* {
+		reverse_proxy core:8080
+	}
+	handle /s/* {
+		reverse_proxy core:8080
+	}
+
+	# Админка — тем же доменом и той же дверью, что витрина: ssh-туннель
+	# больше не нужен. Замки внутри core: роль, пароль, TOTP, лимит попыток
+	# входа и cookie только на этот префикс.
+	@admin path /admin /admin/*
+	handle @admin {
+		reverse_proxy core:8081
+	}
+
+	# Приложение для Android и его версия: /app/kino.apk и /app/version.json.
+	# Файлы лежат вне репозитория (том /srv/apk), кладёт их
+	# deploy/prod/publish-apk.sh; оболочка читает version.json сама.
+	handle /app/* {
+		uri strip_prefix /app
+		root * /srv/apk
+		header Cache-Control "no-cache"
+		file_server
+	}
+
+	# Всё остальное — собранный фронтенд. try_files ради маршрутов на hash
+	# не нужен, но пусть будет: с ним переживём переход на history API.
+	handle {
+		root * /srv/web
+		# index.html не кешируется: иначе после выкатки браузер и WebView
+		# держат старую страницу со ссылками на ассеты, которых уже нет, а
+		# без сети показывают её вместо честной ошибки. Ассеты с хешем
+		# в имени можно держать вечно.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@page not path /assets/*
+		header @page Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

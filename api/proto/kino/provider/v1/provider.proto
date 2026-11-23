@@ -1,0 +1,216 @@
+syntax = "proto3";
+
+// Контракт «хост <-> провайдер». Реализуется на любом языке.
+// Мажор пакета = мажор API: v2 будет отдельным пакетом, оба живут одновременно.
+package kino.provider.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ── Реализует ПЛАГИН ────────────────────────────────────────────────────────
+service Provider {
+  rpc Describe(DescribeRequest) returns (Descriptor);
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Catalog plane: медленный, кешируемый, батчевый.
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc GetTitle(GetTitleRequest) returns (GetTitleResponse);
+  rpc ListEpisodes(ListEpisodesRequest) returns (ListEpisodesResponse);
+  rpc SyncDelta(SyncDeltaRequest) returns (stream TitleChange);
+
+  // Playback plane: быстрый, синхронный, результат живёт минуты.
+  rpc Resolve(ResolveRequest) returns (ResolveResponse);
+}
+
+// ── Реализует ХОСТ. Адрес приходит плагину через env PLUGIN_HOST_ADDR ───────
+// Позволяет плагину не знать ничего об инфраструктуре: ни БД, ни Redis,
+// ни схемы. Плагину на любом языке нужен только gRPC.
+service PluginHost {
+  rpc StateGet(StateGetRequest) returns (StateGetResponse);
+  rpc StateSet(StateSetRequest) returns (StateSetResponse);
+  // Централизованная вежливость: криво написанный плагин не задолбит площадку.
+  rpc AcquireRateLimit(RateLimitRequest) returns (RateLimitResponse);
+  rpc Log(LogRequest) returns (LogResponse);
+}
+
+// ── Хендшейк ────────────────────────────────────────────────────────────────
+message DescribeRequest {}
+
+message Descriptor {
+  uint32 api_major = 1;           // не совпал -> плагин не регистрируется
+  uint32 api_minor = 2;           // хост берёт пересечение возможностей
+  string provider_id = 3;         // "kinopub"
+  string provider_version = 4;    // версия самого плагина, независима от API
+  repeated Capability capabilities = 5;
+}
+
+// Capability != версия. Версия описывает ФОРМУ контракта; capability — умеет ли
+// ЭТОТ провайдер опциональную операцию. Путаница ведёт к инфляции мажоров.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_SEARCH = 1;
+  CAPABILITY_SYNC_DELTA = 2;
+  CAPABILITY_MULTI_AUDIO = 3;
+  CAPABILITY_SUBTITLES = 4;
+  CAPABILITY_HLS = 5;
+  CAPABILITY_PROGRESSIVE = 6;
+}
+
+message HealthRequest {}
+message HealthResponse {
+  bool ok = 1;
+  string detail = 2;
+  bool authenticated = 3;  // креды площадки ещё живы?
+}
+
+// ── Каноническая модель ─────────────────────────────────────────────────────
+message ProviderRef {
+  string provider_id = 1;
+  string provider_item_id = 2;
+}
+
+// Матчинг между площадками держится на этих ID. Без них подключение второго
+// провайдера не склеит один и тот же тайтл.
+message ExternalIds {
+  string imdb = 1;
+  string tmdb = 2;
+  string kinopoisk = 3;
+}
+
+enum TitleKind {
+  TITLE_KIND_UNSPECIFIED = 0;
+  TITLE_KIND_MOVIE = 1;
+  TITLE_KIND_SERIES = 2;
+}
+
+message Title {
+  ProviderRef ref = 1;
+  TitleKind kind = 2;
+  ExternalIds ids = 3;
+  string title = 4;
+  string title_original = 5;
+  int32 year = 6;
+  repeated string genres = 7;
+  string plot = 8;
+  repeated Artwork artwork = 9;
+  // Сколько примерно людей знают произведение: число людей, общая шкала для
+  // всех площадок (не баллы и не просмотры самой площадки). 0 — неизвестно.
+  // Поиск ставит популярное вперёд среди одинаково подходящих.
+  int64 popularity = 10;
+  // Сырой ответ площадки. Не для бизнес-логики — для отладки и backfill'а,
+  // когда канонической модели не хватит поля (ось версионирования 2).
+  google.protobuf.Struct raw = 20;
+}
+
+message Artwork { string url = 1; string kind = 2; }
+
+message Episode {
+  ProviderRef ref = 1;
+  int32 season_no = 2;
+  int32 episode_no = 3;
+  optional int32 episode_no_absolute = 4;  // расхождение нумераций между площадками
+  string title = 5;
+  int32 duration_sec = 6;
+  // duration_sec — оценка (одна длина на весь тайтл), а не длина этой серии:
+  // хост берёт её, только пока точной нет ни у одной площадки.
+  bool duration_approximate = 7;
+}
+
+message SearchRequest  { string query = 1; int32 limit = 2; string cursor = 3; }
+message SearchResponse { repeated Title titles = 1; string next_cursor = 2; }
+message GetTitleRequest  { ProviderRef ref = 1; }
+message GetTitleResponse { Title title = 1; }
+message ListEpisodesRequest  { ProviderRef ref = 1; }
+message ListEpisodesResponse { repeated Episode episodes = 1; }
+message SyncDeltaRequest { string cursor = 1; }
+message TitleChange {
+  enum Kind { KIND_UNSPECIFIED = 0; KIND_UPSERT = 1; KIND_DELETE = 2; }
+  Kind kind = 1;
+  Title title = 2;
+  string cursor = 3;
+}
+
+// ── Playback ────────────────────────────────────────────────────────────────
+// Профиль клиента идёт в запрос, чтобы выбор кодека/рендишена делал провайдер,
+// а не прибитая к kinopub логика в core.
+message ClientProfile {
+  repeated string codecs = 1;      // "avc1", "hvc1", ...
+  int32 max_height = 2;
+  bool supports_hls = 3;
+  bool supports_dash = 4;
+  int32 bandwidth_hint_kbps = 5;
+}
+
+message ResolveRequest {
+  ProviderRef ref = 1;
+  int32 season_no = 2;
+  int32 episode_no = 3;
+  ClientProfile client = 4;
+  string audio_preference = 5;   // выбранная дорожка озвучки
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_HLS = 1;
+  PROTOCOL_DASH = 2;
+  PROTOCOL_PROGRESSIVE = 3;
+}
+
+message ResolveResponse {
+  Protocol protocol = 1;
+  string url = 2;
+  map<string, string> upstream_headers = 3;  // ЧУВСТВИТЕЛЬНО: не логировать
+  repeated string allowed_origins = 4;       // защита от SSRF; живёт в тикете, не в конфиге gateway
+  // Обязательные, не опциональные: от них зависит вся схема доставки.
+  google.protobuf.Timestamp expires_at = 5;
+  bool ip_bound = 6;                         // резолв и отдача обязаны идти с одного egress
+  // false -> источник не укладывается в generic-перенос, уходит в download+remux
+  // вместо протечки провайдерского кода в gateway (ADR-0002).
+  bool passthrough = 7;
+  repeated AudioTrack audios = 8;
+  repeated TextTrack subtitles = 9;
+  repeated Rendition renditions = 10;
+  // Разметка пропуска, которую плеер площадки отдал вместе с потоком.
+  // Снята с этого же файла — точна. Разметку отдельным запросом (Kodik на
+  // странице каждой серии) хост спрашивает сам, резолв её не ждёт.
+  repeated Segment segments = 11;
+}
+
+enum SegmentKind {
+  SEGMENT_KIND_UNSPECIFIED = 0;
+  SEGMENT_KIND_INTRO = 1;    // опенинг, заставка
+  SEGMENT_KIND_OUTRO = 2;    // эндинг, титры
+  SEGMENT_KIND_RECAP = 3;    // пересказ прошлых серий
+  SEGMENT_KIND_PREVIEW = 4;  // анонс следующей серии
+  // Площадка велела пропустить, не сказав что: вид решает плеер по месту.
+  SEGMENT_KIND_SKIP = 5;
+}
+
+message Segment {
+  SegmentKind kind = 1;
+  int64 start_ms = 2;
+  int64 end_ms = 3;
+  // Длина размеченного файла, если разметка не с этого потока; 0 — с него.
+  int64 for_duration_ms = 4;
+}
+
+message AudioTrack { string id = 1; string language = 2; string title = 3; string codec = 4; }
+message TextTrack  {
+  string id = 1; string language = 2; string title = 3; string url = 4; string format = 5;
+  // Файл отдельно от потока (WebVTT): url уезжает в тикет, отдаёт его шлюз.
+  // Без флага url — справка, дорожка и так есть в плейлисте.
+  bool sidecar = 6;
+  // Включить сразу: вариант «с субтитрами» без них не имеет смысла.
+  bool enabled_by_default = 7;
+}
+message Rendition  { int32 height = 1; int32 bitrate_kbps = 2; string codec = 3; }
+
+// ── PluginHost ──────────────────────────────────────────────────────────────
+message StateGetRequest  { string key = 1; }
+message StateGetResponse { bytes value = 1; bool found = 2; }
+message StateSetRequest  { string key = 1; bytes value = 2; int64 ttl_sec = 3; }
+message StateSetResponse {}
+message RateLimitRequest  { string bucket = 1; int32 tokens = 2; }
+message RateLimitResponse { bool granted = 1; int64 retry_after_ms = 2; }
+message LogRequest  { string level = 1; string message = 2; map<string, string> fields = 3; }
+message LogResponse {}

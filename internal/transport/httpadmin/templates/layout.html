@@ -1,0 +1,70 @@
+{{define "layout"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0f1216">
+<title>{{.Title}} · kino admin</title>
+<link rel="icon" href="{{.Prefix}}/static/icon.svg?v={{.V}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Prefix}}/static/admin.css?v={{.V}}">
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <a class="brand" href="{{.Prefix}}/">
+      <span class="mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path fill-rule="evenodd" d="M13 17H51A6 6 0 0 1 57 23V26.5A5.5 5.5 0 0 0 57 37.5V41A6 6 0 0 1 51 47H13A6 6 0 0 1 7 41V37.5A5.5 5.5 0 0 0 7 26.5V23A6 6 0 0 1 13 17ZM24 23L39 32L24 41ZM45.5 21h3v3h-3zM45.5 26.6h3v3h-3zM45.5 32.2h3v3h-3zM45.5 37.8h3v3h-3z"/></svg></span>
+      <span class="brand-name">kino <em>admin</em></span>
+    </a>
+    <nav class="nav">
+      <a class="{{if eq .Active "dashboard"}}on{{end}}" href="{{.Prefix}}/">
+        <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z"/></svg>Обзор</a>
+      <a class="{{if or (eq .Active "users") (eq .Active "user")}}on{{end}}" href="{{.Prefix}}/users">
+        <svg viewBox="0 0 24 24"><path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 11a3 3 0 1 0-.5-6M17 14c2.8 0 4.5 2 4.5 5"/></svg>Пользователи</a>
+      <a class="{{if eq .Active "invites"}}on{{end}}" href="{{.Prefix}}/invites">
+        <svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4zM14 6v12"/></svg>Инвайты</a>
+      <a class="{{if or (eq .Active "titles") (eq .Active "title")}}on{{end}}" href="{{.Prefix}}/titles">
+        <svg viewBox="0 0 24 24"><path d="M4 5h6v14H4zM14 5h6v6h-6zM14 15h6v4h-6z"/></svg>Тайтлы</a>
+      <a class="{{if eq .Active "voices"}}on{{end}}" href="{{.Prefix}}/voices">
+        <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Озвучки</a>
+      <a class="{{if eq .Active "providers"}}on{{end}}" href="{{.Prefix}}/providers">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16v5H4zM4 14h16v5H4zM7 7.5h.01M7 16.5h.01"/></svg>Площадки</a>
+      <a class="{{if eq .Active "playback"}}on{{end}}" href="{{.Prefix}}/playback">
+        <svg viewBox="0 0 24 24"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg>Воспроизведение</a>
+      <a class="{{if eq .Active "audit"}}on{{end}}" href="{{.Prefix}}/audit">
+        <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 9h8M8 13h8M8 17h5"/></svg>Журнал</a>
+    </nav>
+    <div class="side-foot">
+      <div class="me">
+        <span class="avatar">{{initials .Me.Login .Me.DisplayName}}</span>
+        <span class="who"><b>{{.Me.DisplayName}}</b><small>{{.Me.Login}}</small></span>
+      </div>
+      <div class="row">
+        <a class="btn ghost sm" href="/">К витрине</a>
+        <form method="post" action="{{.Prefix}}/logout"><button class="btn ghost sm">Выйти</button></form>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="top">
+      <h1>{{.Title}}</h1>
+      <div class="top-actions">{{block "actions" .}}{{end}}</div>
+    </header>
+    {{range .Reauths}}
+    <div class="flash alarm" role="alert">
+      <b>{{.Name}}: нужна переавторизация</b> <span class="muted">— с {{date .Since}}</span><br>
+      Площадка отвергла наш вход, и сам он не продлился. Люди пока смотрят с запасных площадок, обход {{.Name}} стоит.
+      Что сделать: на Mac <code>kinopub login --qr</code> (если сессии нет), затем <code>make kinopub-token</code>;
+      значения KINOPUB_TOKEN, KINOPUB_REFRESH_TOKEN, KINOPUB_TOKEN_EXPIRES_AT, KINOPUB_CLIENT_ID и KINOPUB_CLIENT_SECRET из <code>.env</code>
+      перенести в <code>/opt/kino/my_kino_platform/.env</code> на сервере и пересоздать core и crawler
+      (<code>docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d --no-deps core crawler</code>).
+      {{if .Cause}}<br><span class="mono small muted">{{.Cause}}</span>{{end}}
+    </div>
+    {{end}}
+    {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+    <div class="content">{{template "content" .}}</div>
+  </main>
+</div>
+<script src="{{.Prefix}}/static/admin.js?v={{.V}}"></script>
+</body>
+</html>{{end}}

@@ -1,0 +1,39 @@
+{{define "actions"}}<a class="btn" href="{{.Prefix}}/invites">Пригласить</a>{{end}}
+{{define "content"}}
+<section class="card">
+  <h2>Новый пользователь</h2>
+  <form class="newuser" method="post" action="{{.Prefix}}/users">
+    <label>Логин<input name="login" placeholder="danis" required minlength="3" maxlength="32" pattern="[a-z0-9_\-]+" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+    <label>Имя<input name="name" placeholder="Данис" maxlength="80" autocomplete="off"></label>
+    <button class="btn primary">Завести</button>
+  </form>
+  <p class="muted small">Без инвайта: телефон потом пускается кодом из карточки пользователя, придумывать пароль не нужно.</p>
+</section>
+
+<section class="card table">
+<table class="list">
+  <thead><tr>
+    <th>Пользователь</th><th>Роль</th><th>Состояние</th><th>2FA</th><th>Последний вход</th><th>Сессий</th><th></th>
+  </tr></thead>
+  <tbody>
+  {{range .Users}}
+  <tr class="{{if .Disabled}}dim{{end}}">
+    <td>
+      <a class="person" href="{{$.Prefix}}/users/{{.ID}}">
+        <span class="avatar">{{initials .Login .DisplayName}}</span>
+        <span class="who"><b>{{.DisplayName}}</b><small>{{.Login}}</small></span>
+      </a>
+    </td>
+    <td>{{if eq .Role "admin"}}<span class="chip accent">админ</span>{{else}}<span class="chip">пользователь</span>{{end}}</td>
+    <td>{{if .Disabled}}<span class="chip error">заблокирован</span>{{else}}<span class="chip ok">активен</span>{{end}}</td>
+    <td>{{if .TOTPEnabled}}<span class="chip ok">есть</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="muted nowrap">{{if .LastLoginAt}}{{since .LastLoginAt}}{{else}}никогда{{end}}</td>
+    <td>{{if .Sessions}}{{.Sessions}}{{else}}<span class="muted">0</span>{{end}}</td>
+    <td class="r"><a class="btn sm ghost" href="{{$.Prefix}}/users/{{.ID}}">Открыть</a></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</section>
+<p class="note">Истории просмотров здесь нет и не будет: это функциональные данные пользователя, а не аналитика (ADR-0005).</p>
+{{end}}

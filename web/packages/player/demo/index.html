@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>@kino/player — standalone demo</title>
+<style>
+  body { font: 14px system-ui; margin: 0; background: #111; color: #eee; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px; }
+  video { width: 100%; background: #000; border-radius: 8px; }
+  input { width: 100%; padding: 8px; margin: 12px 0; font: inherit; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  .stat { background: #222; padding: 4px 10px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+</style>
+<main>
+  <h1>@kino/player</h1>
+  <p>Демо без бэкенда. Если это работает — плеер отделяем.</p>
+  <input id="url" placeholder="https://.../master.m3u8"
+         value="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8">
+  <div class="row"><button id="load">Load</button><span id="impl" class="stat">engine: —</span></div>
+  <video id="v" controls playsinline></video>
+  <div class="row" id="tracks"></div>
+  <div class="row">
+    <span class="stat" id="pos">0:00</span>
+    <span class="stat" id="reb">rebuffer: 0</span>
+  </div>
+</main>
+<script type="module" src="./main.ts"></script>

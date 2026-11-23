@@ -1,0 +1,13 @@
+{
+  "name": "@kino/e2e",
+  "private": true,
+  "type": "module",
+  "//": "Живёт вне рабочего пространства pnpm и вне образа витрины: в pnpm-workspace перечислены только packages/* и apps/*, а web.Dockerfile копирует только их. Playwright сюда не попадёт ни в сборку, ни в боевой образ.",
+  "scripts": {
+    "test": "playwright test",
+    "device": "node device.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

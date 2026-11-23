@@ -1,0 +1,60 @@
+{{define "actions"}}<form method="post" action="{{.Prefix}}/invites"><button class="btn primary">Новый инвайт</button></form>{{end}}
+{{define "content"}}
+<section class="stats">
+  <a class="stat" href="{{.Prefix}}/users">
+    <span class="k">Пользователи</span>
+    <span class="v">{{.Users}}</span>
+    <span class="s">{{.Active7}} заходили за неделю{{if .Disabled}} · {{.Disabled}} заблокировано{{end}}</span>
+  </a>
+  <a class="stat" href="{{.Prefix}}/invites">
+    <span class="k">Открытые инвайты</span>
+    <span class="v">{{.Invites}}</span>
+    <span class="s">{{if .Invites}}ссылки действуют семь дней{{else}}никто не ждёт входа{{end}}</span>
+  </a>
+  <a class="stat" href="{{.Prefix}}/providers">
+    <span class="k">Каталог</span>
+    <span class="v">{{.Catalog.Titles}}</span>
+    <span class="s">{{.Catalog.Series}} сериалов · {{.Catalog.Movies}} фильмов · {{.Catalog.Episodes}} серий</span>
+  </a>
+  <a class="stat" href="{{.Prefix}}/playback">
+    <span class="k">Просмотров за неделю</span>
+    <span class="v">{{.Sessions7}}</span>
+    <span class="s">{{if .Errors7}}<b class="err">{{.Errors7}} с ошибкой</b> · {{else}}без ошибок · {{end}}{{bytes .Bytes7}}</span>
+  </a>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <h2>Площадки</h2>
+    {{range .Providers}}
+    <div class="prov">
+      <div class="row">
+        <b>{{.Name}}</b>
+        <span class="chip {{.Status}}">{{.StatusLabel}}</span>
+      </div>
+      <div class="muted small">
+        прогон {{if .LastRunAt}}{{since .LastRunAt}}{{else}}—{{end}} · синк до {{if .LastSyncedAt}}{{date .LastSyncedAt}}{{else}}—{{end}} · привязано {{.Refs}}
+      </div>
+      {{if .Error}}<div class="err small mono">{{.Error}}</div>{{end}}
+    </div>
+    {{else}}
+    <p class="muted">Ни одна площадка ещё не синхронизировалась. Кравлер запускается отдельным сервисом — проверьте его журнал.</p>
+    {{end}}
+  </section>
+
+  <section class="card">
+    <h2>Последние действия <a class="more" href="{{.Prefix}}/audit">весь журнал →</a></h2>
+    {{if .Audit}}
+    <table class="compact">
+      {{range .Audit}}
+      <tr>
+        <td class="muted nowrap">{{since .CreatedAt}}</td>
+        <td><b>{{.ActorLogin}}</b> {{action .Action}}</td>
+        <td class="mono muted">{{.Target}}</td>
+      </tr>
+      {{end}}
+    </table>
+    {{else}}<p class="muted">Журнал пуст.</p>{{end}}
+  </section>
+</div>
+{{end}}

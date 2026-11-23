@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "declaration": true,
+    "outDir": "dist",
+    "skipLibCheck": true,
+    "jsx": "react-jsx"
+  },
+  "//": "Никаких path-алиасов на приложение. Плеер должен компилироваться в отрыве от монорепы.",
+  "include": ["src"]
+}

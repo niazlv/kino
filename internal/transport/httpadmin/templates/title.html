@@ -1,0 +1,87 @@
+{{define "actions"}}<a class="btn ghost" href="{{.Prefix}}/titles">← Поиск тайтлов</a>{{end}}
+{{define "content"}}
+{{$t := .T}}
+<section class="card head">
+  <div>
+    <h2>{{$t.Title}} <span class="muted">#{{$t.ID}}</span></h2>
+    <div class="chips">
+      <span class="chip">{{if eq $t.Kind "movie"}}фильм{{else}}сериал{{end}}</span>
+      {{if $t.Year}}<span class="chip">{{$t.Year}}</span>{{end}}
+      {{if $t.IDs.IMDB}}<span class="chip mono">{{$t.IDs.IMDB}}</span>{{end}}
+      {{range $t.Genres}}<span class="chip">{{.}}</span>{{end}}
+    </div>
+  </div>
+</section>
+
+<section class="card table">
+  <h2>Площадки</h2>
+  <table class="list">
+    <thead><tr><th>Площадка</th><th>Элемент</th><th>Сезон</th><th>Серий</th><th>Склеено</th><th>Приоритет</th><th></th></tr></thead>
+    <tbody>
+    {{range .Sources}}
+    <tr{{if .Disabled}} class="muted"{{end}}>
+      <td><b>{{.Name}}</b>{{if .Disabled}} <span class="chip error">выключена</span>{{end}}{{if .Pinned}} <span class="chip">закреплено</span>{{end}}</td>
+      <td class="mono small">{{.ItemID}}{{if .MAL}}<br><span class="muted">MAL {{.MAL}}</span>{{end}}</td>
+      <td>{{if .SeasonNo}}{{.SeasonNo}}{{else}}<span class="muted">весь</span>{{end}}</td>
+      <td>{{.Episodes}}{{if .SeenAt}}<br><span class="muted small">{{since .SeenAt}}</span>{{end}}</td>
+      <td class="muted">{{.MatchedBy}}</td>
+      <td>
+        <form method="post" action="{{$.Prefix}}/titles/{{$t.ID}}/sources/priority" class="row">
+          <input type="hidden" name="provider" value="{{.ProviderID}}"><input type="hidden" name="item" value="{{.ItemID}}">
+          <input name="priority" value="{{if .Manual}}{{.Priority}}{{end}}" placeholder="{{.Priority}} (авто)" size="7" inputmode="numeric">
+          <button class="btn sm">Задать</button>
+        </form>
+      </td>
+      <td class="nowrap">
+        <form method="post" action="{{$.Prefix}}/titles/{{$t.ID}}/sources/toggle">
+          <input type="hidden" name="provider" value="{{.ProviderID}}"><input type="hidden" name="item" value="{{.ItemID}}">
+          <input type="hidden" name="off" value="{{if .Disabled}}false{{else}}true{{end}}">
+          <button class="btn sm ghost">{{if .Disabled}}Включить{{else}}Выключить{{end}}</button>
+        </form>
+        <form method="post" action="{{$.Prefix}}/titles/{{$t.ID}}/sources/detach"
+              data-confirm="Вынести {{.Name}} {{.ItemID}} в отдельный тайтл? Серии этой площадки уйдут из этого тайтла.">
+          <input type="hidden" name="provider" value="{{.ProviderID}}"><input type="hidden" name="item" value="{{.ItemID}}">
+          <button class="btn sm ghost">Отвязать</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="7" class="muted">У тайтла нет площадок.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="note">Играет площадка с наибольшим приоритетом, у которой есть серия; если серии нет или площадка не отвечает — следующая. Пустое поле — приоритет площадки из конфига. Выбор человека в плеере важнее приоритета.</p>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <h2>Привязать элемент площадки</h2>
+    <form class="act" method="post" action="{{$.Prefix}}/titles/{{$t.ID}}/sources/attach">
+      <div>
+        <select name="provider">{{range .Providers}}<option value="{{.ProviderID}}">{{.Name}}</option>{{end}}</select>
+        <input name="item" list="suggest-refs" data-suggest="refs" autocomplete="off"
+               placeholder="номер у площадки: 1876, princessa-shpionka-421" required>
+        <datalist id="suggest-refs"></datalist>
+        <input name="season" placeholder="сезон этого тайтла (пусто — весь)" inputmode="numeric">
+        <input name="reason" placeholder="причина — попадёт в журнал" maxlength="200">
+        <small>Если элемент уже привязан к другому тайтлу, он переедет сюда. Обход привязку больше не тронет. Подсказка ищет по номерам элементов и названиям тайтлов — начните печатать.</small>
+      </div>
+      <button class="btn">Привязать</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Слить с другим тайтлом</h2>
+    <form class="act" method="post" action="{{$.Prefix}}/titles/{{$t.ID}}/merge"
+          data-confirm="Слить #{{$t.ID}} в другой тайтл? Этот тайтл исчезнет, его площадки, серии, прогресс и отметки переедут.">
+      <div>
+        <input name="into" list="suggest-titles" data-suggest="titles" autocomplete="off"
+               placeholder="номер тайтла, в который слить" inputmode="numeric" required>
+        <datalist id="suggest-titles"></datalist>
+        <input name="reason" placeholder="причина — попадёт в журнал" maxlength="200">
+        <small>Для дублей: прогресс переносится на те же сезон и серию, из двух позиций остаётся более свежая. Подсказка ищет по каталогу — начните печатать название.</small>
+      </div>
+      <button class="btn danger">Слить</button>
+    </form>
+  </section>
+</div>
+{{end}}

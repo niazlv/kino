@@ -1,0 +1,7 @@
+version: v2
+modules:
+  - path: api/proto
+lint:
+  use: [STANDARD]
+breaking:
+  use: [FILE]   # ломающее изменение схемы не пройдёт CI (ось версионирования 1 и 3)

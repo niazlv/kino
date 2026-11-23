@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider: APK автообновления и файлы площадок для «Отправить нам» — в кеше приложения. -->
+<paths>
+    <cache-path name="update" path="update/" />
+    <cache-path name="sources" path="sources/" />
+</paths>
