@@ -35,11 +35,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - if: env.RELEASE == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -67,25 +67,25 @@ jobs:
     if: github.repository == 'niazlv/kino'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {path: kino}
       - name: Версия утилиты загрузки
         id: kd
         run: echo "ref=$(cat kino/.github/kinopub-downloader.ref 2>/dev/null || echo main)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: niazlv/kinopub-downloader
           ref: ${{ steps.kd.outputs.ref }}
           path: kinopub-downloader
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with: {go-version-file: kino/go.mod, cache-dependency-path: kino/go.sum}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with: {distribution: temurin, java-version: '21'}
       - name: Android NDK r27
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" >/dev/null
           echo "ANDROID_NDK=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/Library/Caches/kino-android
           key: ffmpeg-n7.1-ndk27-${{ runner.os }}
@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           apk=$(ls ~/Library/Caches/kino-android-native/app/outputs/apk/release/*.apk | head -1)
           mkdir -p out && cp "$apk" out/kino-core-unsigned.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: android, path: out/}
 
   ios:
@@ -112,10 +112,10 @@ jobs:
     if: github.repository == 'niazlv/kino'
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: IPA
         run: ios/scripts/build-unsigned-ipa.sh "$PWD/out/kino-unsigned.ipa"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: ios, path: out/}
 
   publish:
@@ -127,7 +127,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: {path: art, merge-multiple: true}
       - name: Подпись APK ключом ядра
         env:
