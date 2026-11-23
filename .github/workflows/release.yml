@@ -89,6 +89,15 @@ jobs:
         with:
           path: ~/Library/Caches/kino-android
           key: ffmpeg-n7.1-ndk27-${{ runner.os }}
+      # Зависимости Gradle — между прогонами: Maven Central отвечает раннерам
+      # GitHub 429 Too Many Requests, если каждый раз качать всё заново.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('kino/android/**/*.gradle.kts', 'kino/android/gradle/**/*.toml', 'kino/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: Утилита загрузки, ffmpeg и движок
         working-directory: kino
         env:
@@ -98,7 +107,13 @@ jobs:
           web/apps/android/tools/build-bins.sh engine
       - name: APK без подписи
         working-directory: kino/android
-        run: ./gradlew :app:assembleRelease -PappIdSuffix=.core -PkinoUrl= --no-daemon --stacktrace
+        # Maven Central временами отвечает 429 — до трёх попыток с паузой.
+        run: |
+          for i in 1 2 3; do
+            ./gradlew :app:assembleRelease -PappIdSuffix=.core -PkinoUrl= --no-daemon --stacktrace && exit 0
+            echo "::warning::Gradle упал (попытка $i из 3) — повтор через минуту"; sleep 60
+          done
+          exit 1
       - name: Артефакт
         run: |
           set -euo pipefail
