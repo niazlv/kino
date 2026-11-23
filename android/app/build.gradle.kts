@@ -61,7 +61,11 @@ android {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
         release {
-            isMinifyEnabled = false
+            // R8 вырезает неиспользуемый код (прежде всего тысячи значков
+            // material-icons-extended), но классы не переименовывает
+            // (-dontobfuscate в proguard-rules.pro): трассы падений читаются
+            // без mapping.txt, поиск классов по имени не ломается.
+            isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Открытый HTTP решает network_security_config.xml (он главнее этого
             // флага с API 24): свой сервер в домашней сети бывает и по http,
