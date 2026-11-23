@@ -57,7 +57,8 @@ type Decision struct {
 // Порядок — по надёжности ключа: внешние идентификаторы, номер
 // MyAnimeList, и только потом названия. Совпадение по названию принимается
 // лишь однозначным: два подходящих кандидата — это уже не склейка, а
-// лотерея, и тогда заводится новый тайтл.
+// лотерея, и тогда заводится новый тайтл. Исключение — однофамилец-дубль
+// рядом с однозначно главным тайтлом (см. primary).
 func Decide(in dp.Title, cands []Candidate) Decision {
 	return DecideWith(Options{}, in, cands)
 }
@@ -112,6 +113,17 @@ func DecideWith(opts Options, in dp.Title, cands []Candidate) Decision {
 		}
 		return Decision{TitleID: hits[0].ID, SeasonNo: season, By: "name"}
 	}
+	// Однофамильцы одного года — чаще всего след прошлого провала склейки:
+	// у «главного» тайтла номер MAL и много площадок, рядом — карточка-дубль
+	// с одной привязкой без MAL (её завела площадка, которой номер не
+	// известен). Это не лотерея: элемент кладётся к главному, а не плодит
+	// третью карточку. Два кандидата с разными MAL (две части одного года),
+	// как и равные без MAL, — по-прежнему лотерея и новый тайтл.
+	if len(hits) > 1 {
+		if p, ok := primary(hits); ok && !taken(p, in.Ref, season) {
+			return Decision{TitleID: p.ID, SeasonNo: season, By: "name"}
+		}
+	}
 
 	// «Гинтама 3»: animego.me пишет сезон голым числом, и без этого шага
 	// каждый сезон становился отдельным тайтлом — а за ним и следующие,
@@ -163,6 +175,43 @@ func narrow(hits []Candidate, year, season int) []Candidate {
 		return byYear(whole, func(a, b int) bool { return a > b })
 	}
 	return byYear(hits, func(a, b int) bool { return a < b })
+}
+
+// primary — главный из однофамильцев, если он однозначен: единственный с
+// номером MAL, а если MAL нет ни у кого — единственный с наибольшим числом
+// привязок. Иначе — false.
+func primary(hits []Candidate) (Candidate, bool) {
+	var withMAL []Candidate
+	for _, c := range hits {
+		if hasMAL(c) {
+			withMAL = append(withMAL, c)
+		}
+	}
+	switch len(withMAL) {
+	case 1:
+		return withMAL[0], true
+	case 0:
+		best, tie := hits[0], false
+		for _, c := range hits[1:] {
+			switch {
+			case len(c.Refs) > len(best.Refs):
+				best, tie = c, false
+			case len(c.Refs) == len(best.Refs):
+				tie = true
+			}
+		}
+		return best, !tie
+	}
+	return Candidate{}, false
+}
+
+func hasMAL(c Candidate) bool {
+	for _, r := range c.Refs {
+		if r.MAL != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // byYear оставляет тайтлы с «лучшим» годом; better(a, b) — a лучше b.
@@ -283,7 +332,7 @@ func ShouldMergeWith(opts Options, p Pair) bool {
 	if a.Year == 0 || b.Year == 0 || !seasonAwareYearsFit(a, b) {
 		return false
 	}
-	if !strongKeyIntersect(a.Keys, b.Keys) {
+	if !strongKeyIntersect(a.Keys, b.Keys) && !loneLatinTwin(a, b) {
 		return false
 	}
 	if cross && !latinIntersect(a.Keys, b.Keys) {
@@ -362,6 +411,33 @@ func strongKeyIntersect(a, b []string) bool {
 		}
 	}
 	return false
+}
+
+// loneLatinTwin — одиночная карточка рядом с настоящим тайтлом того же
+// произведения при однословном названии («Ганц / Gantz», «Дороро»).
+//
+// Одно слово как ключ слишком слабо (strongKeyIntersect): «персона» — это и
+// Persona 4, и Persona 5. Но одиночная карточка — одна привязка без MAL,
+// которую завела площадка, не знающая номеров, — рядом с тайтлом, у
+// которого MAL есть, при совпадении ЛАТИНСКОГО оригинала и ровно того же
+// года, и без сезонов позже первого — это дубль, а не однофамилец: у
+// Persona 4 и 5 разные годы, а у «Монстра» и одноимённого кино — разный вид
+// (его отсекают проверки выше). Предохранитель «одна площадка дважды на
+// одном сезоне» действует после этой проверки, как и для остальных.
+func loneLatinTwin(a, b Candidate) bool {
+	if a.Year != b.Year || maxSeason(a, b) > 1 {
+		return false
+	}
+	if !(lone(a) && hasMAL(b)) && !(lone(b) && hasMAL(a)) {
+		return false
+	}
+	return latinIntersect(a.Keys, b.Keys)
+}
+
+// lone — одна привязка, без номера MAL: карточка, заведённая площадкой,
+// которая не знает номеров.
+func lone(c Candidate) bool {
+	return len(c.Refs) == 1 && c.Refs[0].MAL == "" && !c.Refs[0].Pinned
 }
 
 // seasonAwareYearsFit — окно лет. У произведений, у которых есть сезоны

@@ -31,6 +31,8 @@ final class PlayerModel {
     // Выбор
     var speed: Float = 1
     var voiceOptions: [VoiceOption] = []
+    /// Озвучки, лежащие в скачанном пакете (имена из плейлиста); у потока пусто.
+    var localAudio: [String] = []
     var subOptions: [String] = []
     var qualityMax: Int = 0          // 0 = из настроек
     var audioLabel: String = ""
@@ -156,6 +158,10 @@ final class PlayerModel {
     private func openLocal(_ entry: LocalLibrary.Entry) async {
         LogUI.event("local open id=\(entry.id) file=\(entry.fileURL.lastPathComponent) exists=\(FileManager.default.fileExists(atPath: entry.fileURL.path))")
         let item = AVPlayerItem(url: entry.fileURL)
+        // Дорожки: выбранная в этом тайтле без сети, иначе — та, что
+        // выбрали при загрузке. Сервер не спрашиваем: его может не быть.
+        if let audio = Self.localPref("audio", titleId) ?? entry.voice, !audio.isEmpty { audioLabel = audio }
+        if let sub = Self.localPref("sub", titleId) { subLabel = sub }
         if entry.positionMs > 0 && !entry.watched {
             pendingSeek = Double(entry.positionMs) / 1000
         }
@@ -240,19 +246,24 @@ final class PlayerModel {
 
     /// Выбор озвучки/субтитров в стриме: текущий выбор важнее запомненного.
     /// Сравнение — по NAME из плейлиста (trackName), не по displayName.
+    /// У скачанного — только дорожки, что легли в пакет (assetCache): чужую
+    /// без сети не сыграть. Повторы kinopub схлопнуты (TrackPlan).
     private func applyTrackSelection(_ asset: AVURLAsset) async {
+        let cache = localEntry != nil ? asset.assetCache : nil
         do {
             if let audible = try await asset.loadMediaSelectionGroup(for: .audible) {
-                var named: [(AVMediaSelectionOption, String)] = []
-                for o in audible.options { named.append((o, await o.trackName())) }
-                var target: (AVMediaSelectionOption, String)?
+                let inFile = cache?.mediaSelectionOptions(in: audible)
                 let wanted = choice.variantLabel ?? (audioLabel.isEmpty ? nil : audioLabel)
-                if let wanted, !wanted.isEmpty {
-                    target = named.first { $0.1.localizedCaseInsensitiveContains(wanted) || wanted.localizedCaseInsensitiveContains($0.1) }
+                let fallback = await audible.defaultOption?.trackName()
+                // В пакете озвучек не нашлось — пусть система играет свою.
+                let named = inFile?.isEmpty == true ? []
+                    : await TrackPlan.options(in: audible, among: inFile, preferred: [wanted, fallback])
+                if cache != nil {
+                    // Меню — в порядке плейлиста, а не «выбранная первой».
+                    localAudio = named.isEmpty ? [] : await TrackPlan.options(in: audible, among: inFile).map(\.name)
+                    LogUI.event("local tracks audio=\(localAudio) first=\(named.first?.name ?? "-")")
                 }
-                if target == nil, let def = audible.defaultOption { target = named.first { $0.0 == def } }
-                if target == nil { target = named.first }
-                if let (option, name) = target {
+                if let (option, name) = named.first {
                     player.currentItem?.select(option, in: audible)
                     // Подпись — студия из общего списка, если она в имени дорожки.
                     audioLabel = voiceOptions.first { !$0.title.isEmpty && name.localizedCaseInsensitiveContains($0.title) }?.title
@@ -260,9 +271,8 @@ final class PlayerModel {
                 }
             }
             if let legible = try await asset.loadMediaSelectionGroup(for: .legible) {
-                var named: [(AVMediaSelectionOption, String)] = []
-                for o in legible.options { named.append((o, await o.trackName())) }
-                subOptions = named.map(\.1).filter { !$0.isEmpty }
+                let named = await TrackPlan.options(in: legible, among: cache?.mediaSelectionOptions(in: legible))
+                subOptions = named.map(\.name).filter { !$0.isEmpty }
                 if subLabel != "Выкл", let hit = named.first(where: { $0.1.localizedCaseInsensitiveContains(subLabel) }) {
                     player.currentItem?.select(hit.0, in: legible)
                     subLabel = hit.1
@@ -558,22 +568,58 @@ final class PlayerModel {
         }
     }
 
+    /// Озвучка скачанного: дорожка из пакета, без нового тикета и без сети.
+    func setLocalAudio(_ name: String) {
+        audioLabel = name
+        menu = nil
+        Self.setLocalPref("audio", titleId, name)
+        Task {
+            guard let item = player.currentItem, let asset = item.asset as? AVURLAsset,
+                  let audible = try? await asset.loadMediaSelectionGroup(for: .audible) else { return }
+            let named = await TrackPlan.options(in: audible, among: asset.assetCache?.mediaSelectionOptions(in: audible))
+            if let hit = named.first(where: { $0.name == name }) { item.select(hit.option, in: audible) }
+            let now = item.currentMediaSelection.selectedMediaOption(in: audible)
+            LogUI.event("local audio set want=\(name) now=\(await now?.trackName() ?? "-")")
+        }
+    }
+
+    /// Выбор дорожек скачанного по тайтлу — на устройстве: следующая
+    /// скачанная серия начнёт с той же озвучки и тех же субтитров без сети.
+    private static func localPrefKey(_ kind: String, _ titleId: Int64) -> String {
+        "local_\(kind)_\(ServerConfig.profile ?? "default")_\(titleId)"
+    }
+
+    static func localPref(_ kind: String, _ titleId: Int64) -> String? {
+        guard titleId > 0 else { return nil }
+        return UserDefaults.standard.string(forKey: localPrefKey(kind, titleId))
+    }
+
+    static func setLocalPref(_ kind: String, _ titleId: Int64, _ value: String) {
+        guard titleId > 0 else { return }
+        UserDefaults.standard.set(value, forKey: localPrefKey(kind, titleId))
+    }
+
     func setSubtitle(_ label: String) {
         subLabel = label
         menu = nil
+        let local = localEntry != nil
+        if local { Self.setLocalPref("sub", titleId, label) }
         Task {
-            // Субтитры — группы legible в стриме.
+            // Субтитры — группы legible в стриме (у скачанного — из пакета).
             if let asset = player.currentItem?.asset as? AVURLAsset,
                let legible = try? await asset.loadMediaSelectionGroup(for: .legible) {
                 if label == "Выкл" {
                     player.currentItem?.select(nil, in: legible)
                 } else {
-                    for o in legible.options where await o.trackName() == label {
-                        player.currentItem?.select(o, in: legible)
-                        break
+                    let inFile = local ? asset.assetCache?.mediaSelectionOptions(in: legible) : nil
+                    let named = await TrackPlan.options(in: legible, among: inFile)
+                    if let hit = named.first(where: { $0.name == label }) {
+                        player.currentItem?.select(hit.option, in: legible)
                     }
                 }
             }
+            // Скачанное смотрят и без сети — выбор там живёт на устройстве.
+            guard !local else { return }
             _ = try? await Api.shared.setPrefs(titleId, PrefsPatch(audio: nil, subtitle: label == "Выкл" ? "" : label, source: nil))
         }
     }

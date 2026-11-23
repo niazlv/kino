@@ -121,6 +121,7 @@ class DownloadService : Service() {
     /** Рабочий цикл уже идёт (в том числе ждёт автоповтора) — второй не нужен. */
     @Volatile private var working = false
     @Volatile private var cancelled = false
+    private val cancelFinished = java.util.concurrent.atomic.AtomicBoolean(false)
     private var done = 0
     private var count = 0
     private var lastEpisodeError = ""
@@ -224,6 +225,14 @@ class DownloadService : Service() {
 
     private fun resume() {
         pausing = false
+        // Задание с паузы — снова в голову очереди. Новая служба делает это в
+        // onCreate, а если прежняя ещё жива, кроме этого места некому.
+        synchronized(this) {
+            Downloader.pausedJob(this)?.let {
+                requeueFront(it)
+                Downloader.savePaused(this, null)
+            }
+        }
         publish(status.value.copy(paused = false))
         if (current == null) startForegroundAndWork()
     }
@@ -237,18 +246,49 @@ class DownloadService : Service() {
         Downloader.saveFailed(this, null)
         val proc = current
         if (proc == null) {
-            scope.launch {
-                // Готовые серии отмена не трогает — они скачаны целиком.
-                runCatching { exportReady(null) }
-                Downloader.workDir(this@DownloadService).deleteRecursively()
-                finishNote("Отменено")
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                publish(DownloadStatus())
-            }
+            scope.launch { finishCancel(null) }
         } else {
             proc.destroy() // читатель цикла увидит обрыв и зайдёт в ветку cancelled
         }
+    }
+
+    /**
+     * Отмена доведена до конца: служба остановлена, экран и уведомление
+     * сброшены. Готовые серии отмена не трогает — они скачаны целиком.
+     * Вызывается и из cancel(), и из рабочего цикла — второй вызов ничего не делает.
+     */
+    private suspend fun finishCancel(job: DownloadJob?) {
+        if (!cancelFinished.compareAndSet(false, true)) return
+        runCatching { exportReady(job) }
+        Downloader.workDir(this).deleteRecursively()
+        finishNote("Отменено")
+        publish(DownloadStatus())
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // «На паузе» могло остаться от прежней службы (parkPaused) — его
+        // stopForeground этой службы не снимает.
+        getSystemService(NotificationManager::class.java).cancel(NOTE_ID)
+        stopSelf()
+    }
+
+    /**
+     * Пауза: готовые серии забираем сразу, остальное продолжит утилита —
+     * по своему состоянию она пропустит скачанное.
+     */
+    private suspend fun finishPause(job: DownloadJob) {
+        runCatching { exportReady(job) }
+        Downloader.savePaused(this, job)
+        publish(status.value.copy(paused = true, running = job))
+        note("На паузе · ${job.title}", actions = NoteActions.RESUME)
+    }
+
+    /**
+     * На паузе служба не нужна: уведомление «На паузе» с «Продолжить» и
+     * статус для экранов остаются, «Продолжить» поднимет её снова. Висеть
+     * foreground-службой нельзя — у dataSync суточный лимит времени.
+     */
+    private fun parkPaused() {
+        stopForeground(STOP_FOREGROUND_DETACH)
+        stopSelf()
     }
 
     // ---- рабочий цикл ----
@@ -264,10 +304,17 @@ class DownloadService : Service() {
                 Downloader.savePaused(this, job)
                 publish(status.value.copy(paused = true, running = job))
                 note("На паузе · ${job.title}", actions = NoteActions.RESUME)
+                parkPaused()
                 return
             }
 
             runJob(job)
+            // Задание встало на паузу. Брать следующее нельзя: оно затёрло бы
+            // запись о паузе, а сброс статуса ниже спрятал бы паузу с экранов.
+            if (pausing && Downloader.pausedJob(this) != null) {
+                parkPaused()
+                return
+            }
         }
         if (!cancelled) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -367,6 +414,9 @@ class DownloadService : Service() {
             }
             val proc = Downloader.process(this, args)
             current = proc
+            // Пауза или отмена пришли, пока ждали движок (current был пуст и
+            // гасить было нечего): утилиту сразу назад, дальше — обычным путём.
+            if (cancelled || pausing) proc.destroy()
 
             Thread {
                 try {
@@ -380,11 +430,18 @@ class DownloadService : Service() {
                 } catch (_: Exception) { }
             }.start()
 
-            proc.inputStream.let { stream ->
-                BufferedReader(InputStreamReader(stream)).forEachLine { line ->
-                    if (!line.startsWith("{")) return@forEachLine
-                    parseEvent(line, job)
+            try {
+                proc.inputStream.let { stream ->
+                    BufferedReader(InputStreamReader(stream)).forEachLine { line ->
+                        if (!line.startsWith("{")) return@forEachLine
+                        parseEvent(line, job)
+                    }
                 }
+            } catch (e: java.io.IOException) {
+                // destroy() закрывает потоки процесса, и чтение обычно рвётся
+                // исключением, а не концом потока. При паузе и отмене это наш же
+                // сигнал: дальше — как при обычном выходе утилиты.
+                if (!pausing && !cancelled) throw e
             }
 
             val code = proc.waitFor()
@@ -393,21 +450,11 @@ class DownloadService : Service() {
             val tail = synchronized(stderr) { stderr.joinToString("\n") }
 
             if (cancelled) {
-                runCatching { exportReady(job) }
-                Downloader.workDir(this).deleteRecursively()
-                finishNote("Отменено")
-                publish(DownloadStatus())
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                finishCancel(job)
                 return
             }
             if (pausing) {
-                // Пауза: готовые серии забираем сразу, остальное продолжит
-                // утилита — по своему состоянию она пропустит скачанное.
-                runCatching { exportReady(job) }
-                Downloader.savePaused(this, job)
-                publish(status.value.copy(paused = true, running = job))
-                note("На паузе · ${job.title}", actions = NoteActions.RESUME)
+                finishPause(job)
                 return
             }
 
@@ -469,10 +516,14 @@ class DownloadService : Service() {
                 publish(status.value.copy(lastError = why, canRetry = true, retryAt = 0))
             }
         } catch (e: Exception) {
-            // Обрыв потоков при destroy() — наш же сигнал паузы/отмены, не ошибка.
-            if (!pausing && !cancelled) {
-                reap(current)
-                current = null
+            reap(current)
+            current = null
+            // Пауза и отмена, оборвавшие задание на любом шаге, — не ошибка, но
+            // их надо довести: отмена останавливает службу и сбрасывает экран,
+            // пауза сохраняет задание для «Продолжить».
+            if (cancelled) finishCancel(job)
+            else if (pausing) finishPause(job)
+            else {
                 val why = e.message ?: "неизвестная ошибка"
                 android.util.Log.w("kino", "качалка: исключение", e)
                 runCatching { exportReady(job) }

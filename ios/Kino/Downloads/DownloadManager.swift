@@ -25,6 +25,8 @@ final class DownloadManager: NSObject, ObservableObject {
         var episodeLabel: String  // "Фильм" | "S сезон, N серия"
         var percent: Double
         var state: State
+        /// Догрузка дорожек после видео: «озвучка 1 из 2», «субтитры».
+        var stage: String? = nil
 
         enum State: Equatable {
             case running, paused, done, failed(String)
@@ -43,6 +45,12 @@ final class DownloadManager: NSObject, ObservableObject {
         var location: String?
         /// Профиль сервера задания; nil — по умолчанию (и все задания прежних версий).
         var profile: String?
+        /// Что догрузить в пакет после видео (TrackPlan.Plan.extras), по порядку.
+        var extras: [String]? = nil
+        /// Сколько озвучек догружается всего — для подписи «1 из N».
+        var extraVoices: Int? = nil
+        /// Видео с основной озвучкой готово и лежит в описи; дальше — догрузка.
+        var entryReady: Bool? = nil
     }
 
     /// Ключ задания: у сервера по умолчанию — сам entryId.
@@ -65,6 +73,8 @@ final class DownloadManager: NSObject, ObservableObject {
     private var session: AVAssetDownloadURLSession!
     /// Ключ задания → задача (в памяти).
     private var tasks: [String: AVAssetDownloadTask] = [:]
+    /// Ключ задания → наблюдатель прогресса задачи.
+    private var progressObservers: [String: NSKeyValueObservation] = [:]
     /// Обработчик фоновой сессии от системы (handleEventsForBackgroundURLSession).
     var backgroundCompletion: (() -> Void)?
 
@@ -108,12 +118,22 @@ final class DownloadManager: NSObject, ObservableObject {
         metas = all
     }
 
-    /// entryId задачи: из памяти или по адресу потока.
+    /// entryId задачи: из памяти, по адресу потока или — у догрузки — по
+    /// скачанному пакету, в который она пишет.
     private func idFor(_ task: URLSessionTask) -> String? {
         if let hit = tasks.first(where: { $0.value == task })?.key { return hit }
         guard let at = task as? AVAssetDownloadTask else { return nil }
-        let url = at.urlAsset.url.absoluteString
-        return metas.first(where: { $0.value.url == url })?.key
+        return Self.key(for: at, in: metas)
+    }
+
+    private static func key(for task: AVAssetDownloadTask, in metas: [String: Meta]) -> String? {
+        let url = task.urlAsset.url
+        if let hit = metas.first(where: { $0.value.url == url.absoluteString })?.key { return hit }
+        guard url.isFileURL else { return nil }
+        let file = url.standardizedFileURL.path
+        return metas.first(where: { m in
+            m.value.location.map { LocalLibrary.url(for: $0).standardizedFileURL.path == file } ?? false
+        })?.key
     }
 
     // MARK: - Постановка задачи
@@ -146,17 +166,23 @@ final class DownloadManager: NSObject, ObservableObject {
             }
             let asset = AVURLAsset(url: url)
             let config = AVAssetDownloadConfiguration(asset: asset, title: title)
-            // Выбранная озвучка — через mediaSelections.
-            if let voiceTitle, let selection = try? await Self.selection(asset: asset, voiceTitle: voiceTitle) {
-                config.primaryContentConfiguration.mediaSelections = [selection]
+            // Видео с выбранной озвучкой; остальные озвучки и субтитры, как в
+            // MKV на Android, — догрузкой в тот же пакет (TrackPlan.Plan). У
+            // площадок, где студия — отдельный поток, озвучка одна.
+            let plan = (try? await TrackPlan.plan(asset: asset, voiceTitle: voiceTitle)) ?? TrackPlan.Plan(primary: nil, extras: [])
+            if let primary = plan.primary {
+                config.primaryContentConfiguration.mediaSelections = [primary]
             }
             guard ServerConfig.generation == generation else { return }
             let task = session.makeAssetDownloadTask(downloadConfiguration: config)
+            LogUI.event("download start id=\(entryId) extras=\(plan.extras)")
             tasks[entryId] = task
+            watch(entryId, task)
             var all = metas
             all[entryId] = Meta(title: title, episodeLabel: episodeLabel, episodeId: episodeId,
                                 voiceKey: voiceKey, voiceTitle: voiceTitle, url: url.absoluteString,
-                                profile: profile)
+                                profile: profile, extras: plan.extras,
+                                extraVoices: plan.extras.filter { $0 != TrackPlan.subtitlesExtra }.count)
             metas = all
             allJobs.removeAll { $0.id == entryId }
             allJobs.append(Job(id: entryId, profile: profile, title: title, episodeLabel: episodeLabel, percent: 0, state: .running))
@@ -169,20 +195,13 @@ final class DownloadManager: NSObject, ObservableObject {
         }
     }
 
-    /// AVMediaSelection с выбранной озвучкой: копия базового выбора + подмена аудио.
-    static func selection(asset: AVURLAsset, voiceTitle: String) async throws -> AVMediaSelection? {
-        let base = try await asset.load(.preferredMediaSelection)
-        guard let group = try await asset.loadMediaSelectionGroup(for: .audible) else { return nil }
-        // По NAME дорожки: displayName у всех — просто «Russian».
-        var opt: AVMediaSelectionOption?
-        for o in group.options where await o.trackName().localizedCaseInsensitiveContains(voiceTitle) {
-            opt = o
-            break
+    /// Прогресс — по NSProgress задачи (Apple велит его вместо отрезков
+    /// времени делегата); стоит на нуле — считают отрезки (didProgress).
+    private func watch(_ id: String, _ task: AVAssetDownloadTask) {
+        progressObservers[id] = task.progress.observe(\.fractionCompleted, options: [.initial, .new]) { [weak self] p, _ in
+            let percent = min(max(p.fractionCompleted, 0), 1) * 100
+            Task { @MainActor in self?.didProgress(id, percent: percent) }
         }
-        guard let opt else { return nil }
-        let mutable = base.mutableCopy() as! AVMutableMediaSelection
-        mutable.select(opt, in: group)
-        return mutable
     }
 
     /// Отмена: недокачанный пакет уберёт didCompleteWithError (-999).
@@ -210,6 +229,7 @@ final class DownloadManager: NSObject, ObservableObject {
         // Повтор выпускает тикет у выбранного сервера — только его заданиям.
         guard let m = metas[id], m.profile == ServerConfig.profile else { return }
         tasks[id] = nil
+        progressObservers[id] = nil
         Task {
             await start(key: id, title: m.title, episodeLabel: m.episodeLabel, episodeId: m.episodeId,
                         voiceKey: m.voiceKey, voiceTitle: m.voiceTitle)
@@ -225,7 +245,9 @@ final class DownloadManager: NSObject, ObservableObject {
         objectWillChange.send()
     }
 
-    /// Подхват незавершённых задач после перезапуска: по сохранённым адресам.
+    /// Подхват незавершённых задач после перезапуска: по сохранённым адресам
+    /// (догрузка — по пакету). Видео готово, а догрузка не начата (убили
+    /// между заданиями) — начать.
     private func restore() {
         session.getAllTasks { [weak self] all in
             Task { @MainActor in
@@ -233,26 +255,35 @@ final class DownloadManager: NSObject, ObservableObject {
                 let metas = self.metas
                 for task in all {
                     guard let at = task as? AVAssetDownloadTask,
-                          let (id, m) = metas.first(where: { $0.value.url == at.urlAsset.url.absoluteString }).map({ ($0.key, $0.value) })
+                          let id = Self.key(for: at, in: metas), let m = metas[id]
                     else { continue }
                     self.tasks[id] = at
+                    self.watch(id, at)
                     if !self.allJobs.contains(where: { $0.id == id }) {
                         let state: Job.State = at.state == .suspended ? .paused : .running
-                        self.allJobs.append(Job(id: id, profile: m.profile, title: m.title, episodeLabel: m.episodeLabel, percent: 0, state: state))
+                        let stage = m.entryReady == true ? m.extras?.first.map { Self.stageLabel(m, $0) } : nil
+                        self.allJobs.append(Job(id: id, profile: m.profile, title: m.title, episodeLabel: m.episodeLabel,
+                                                percent: 0, state: state, stage: stage))
                     }
+                }
+                for (id, m) in metas where m.entryReady == true && self.tasks[id] == nil {
+                    Task { await self.startExtra(id) }
                 }
             }
         }
     }
 
-    private func update(_ id: String, percent: Double? = nil, state: Job.State? = nil) {
+    private func update(_ id: String, percent: Double? = nil, state: Job.State? = nil, stage: String? = nil) {
         guard let i = allJobs.firstIndex(where: { $0.id == id }) else { return }
         if let percent { allJobs[i].percent = percent }
         if let state { allJobs[i].state = state }
+        if let stage { allJobs[i].stage = stage }
     }
 
     private func forget(_ id: String) {
         tasks[id] = nil
+        progressObservers[id] = nil
+        loggedDecile[id] = nil
         var all = metas
         all[id] = nil
         metas = all
@@ -273,11 +304,21 @@ final class DownloadManager: NSObject, ObservableObject {
 
     fileprivate func didFinish(_ task: AVAssetDownloadTask, location: URL) {
         guard let id = idFor(task) else { return }
+        if let m = metas[id], m.entryReady == true {
+            // Догрузка пишет в тот же пакет; путь описи не трогаем.
+            let same = m.location.map { LocalLibrary.url(for: $0).resolvingSymlinksInPath().path == location.resolvingSymlinksInPath().path } ?? false
+            LogUI.event("download extra location id=\(id) same=\(same) uri=\(LocalLibrary.storedPath(location))")
+            return
+        }
         setMeta(id) { $0.location = LocalLibrary.storedPath(location) }
     }
 
     fileprivate func didComplete(_ task: URLSessionTask, error: Error?) {
         guard let id = idFor(task) else { return }
+        if let meta = metas[id], meta.entryReady == true {
+            didCompleteExtra(id, meta: meta, error: error)
+            return
+        }
         let meta = metas[id]
         let location = meta?.location.map { LocalLibrary.url(for: $0) }
         if let error {
@@ -285,6 +326,7 @@ final class DownloadManager: NSObject, ObservableObject {
             if let location { try? FileManager.default.removeItem(at: location) }
             let ns = error as NSError
             tasks[id] = nil
+            progressObservers[id] = nil
             setMeta(id) { $0.location = nil }
             if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled {
                 forget(id)
@@ -320,17 +362,135 @@ final class DownloadManager: NSObject, ObservableObject {
             uri: LocalLibrary.storedPath(location), size: Self.dirSize(location),
             addedAt: Int64(Date().timeIntervalSince1970 * 1000),
             positionMs: 0, durationMs: 0, watched: false, dirty: false,
-            movie: meta.episodeLabel == "Фильм"
+            movie: meta.episodeLabel == "Фильм", voice: meta.voiceTitle
         )
         library.put(entry)
         LogUI.event("download done id=\(id) size=\(entry.size) uri=\(entry.uri)")
+        // Видео уже смотрят; остальные озвучки и субтитры — догрузкой.
+        if let extras = meta.extras, !extras.isEmpty {
+            tasks[id] = nil
+            progressObservers[id] = nil
+            loggedDecile[id] = nil
+            setMeta(id) { $0.entryReady = true }
+            Task { await startExtra(id) }
+            return
+        }
+        finishExtras(id, meta: meta)
+    }
+
+    // MARK: - Догрузка дорожек
+
+    /// Следующая дорожка в скачанный пакет; кончились — задание готово.
+    /// Пустой выбор (уже лежит, пропала из потока) пропускается.
+    private func startExtra(_ id: String) async {
+        while let meta = metas[id], let extra = meta.extras?.first, let loc = meta.location {
+            let asset = AVURLAsset(url: LocalLibrary.url(for: loc))
+            let selections = (try? await TrackPlan.extraSelections(asset: asset, extra: extra)) ?? []
+            // Пока выбирали дорожку, задание отменили.
+            guard metas[id] != nil else { return }
+            if selections.isEmpty {
+                setMeta(id) { $0.extras = Array(($0.extras ?? []).dropFirst()) }
+                continue
+            }
+            let config = AVAssetDownloadConfiguration(asset: asset, title: meta.title)
+            config.primaryContentConfiguration.mediaSelections = selections
+            let task = session.makeAssetDownloadTask(downloadConfiguration: config)
+            tasks[id] = task
+            watch(id, task)
+            let stage = Self.stageLabel(meta, extra)
+            if allJobs.contains(where: { $0.id == id }) {
+                update(id, percent: 0, state: .running, stage: stage)
+            } else {
+                allJobs.append(Job(id: id, profile: meta.profile, title: meta.title, episodeLabel: meta.episodeLabel,
+                                   percent: 0, state: .running, stage: stage))
+            }
+            LogUI.event("download extra id=\(id) extra=\(extra) selections=\(selections.count)")
+            task.resume()
+            return
+        }
+        if let meta = metas[id] { finishExtras(id, meta: meta) }
+    }
+
+    /// Догрузка дорожки кончилась — удачно или нет, к следующей: сбой одной
+    /// озвучки не повод трогать видео, оно уже в описи и играет.
+    private func didCompleteExtra(_ id: String, meta: Meta, error: Error?) {
+        tasks[id] = nil
+        progressObservers[id] = nil
+        loggedDecile[id] = nil
+        if let ns = error as NSError? {
+            if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled {
+                // «Отменить» во время догрузки: видео и успевшие дорожки остаются.
+                finishExtras(id, meta: meta)
+                return
+            }
+            LogUI.event("download extra failed id=\(id) extra=\(meta.extras?.first ?? "-") err=\(ns.domain) \(ns.code)")
+        }
+        setMeta(id) { $0.extras = Array(($0.extras ?? []).dropFirst()) }
+        Task { await startExtra(id) }
+    }
+
+    /// Задание готово: размер в описи — с догруженными дорожками.
+    private func finishExtras(_ id: String, meta: Meta) {
+        if let loc = meta.location {
+            let url = LocalLibrary.url(for: loc)
+            let library = LocalLibrary.library(for: meta.profile)
+            if var entry = library.entry(Self.entryId(fromKey: id)),
+               entry.fileURL.standardizedFileURL == url.standardizedFileURL {
+                entry.size = Self.dirSize(url)
+                library.put(entry)
+            }
+            Task { LogUI.event("download tracks id=\(id) \(await Self.cachedTracks(url))") }
+        }
         forget(id)
         allJobs.removeAll { $0.id == id }
     }
 
+    /// «озвучка 1 из 2» / «субтитры».
+    private static func stageLabel(_ meta: Meta, _ extra: String) -> String {
+        if extra == TrackPlan.subtitlesExtra { return "субтитры" }
+        let total = meta.extraVoices ?? 0
+        let left = (meta.extras ?? []).filter { $0 != TrackPlan.subtitlesExtra }.count
+        return "озвучка \(max(total - left + 1, 1)) из \(max(total, 1))"
+    }
+
     fileprivate func didProgress(_ task: AVAssetDownloadTask, percent: Double) {
         guard let id = idFor(task) else { return }
+        // NSProgress задачи считает все дорожки (watch), но бывает, что он
+        // стоит на нуле, — тогда отрезки времени из делегата.
+        let p = task.progress
+        if p.fractionCompleted <= 0 { didProgress(id, percent: percent, fallback: true) }
+        logProgress(id, ns: p.fractionCompleted * 100, time: percent, units: "\(p.completedUnitCount)/\(p.totalUnitCount)")
+    }
+
+    /// Журнал прогресса по десяткам процентов — сверять NSProgress и отрезки времени.
+    private var loggedDecile: [String: Int] = [:]
+    private func logProgress(_ id: String, ns: Double, time: Double, units: String) {
+        let decile = Int(max(ns, time) / 10)
+        guard decile != loggedDecile[id] else { return }
+        loggedDecile[id] = decile
+        LogUI.event(String(format: "download progress id=%@ ns=%.1f%% time=%.1f%% units=%@", id, ns, time, units))
+    }
+
+    private func didProgress(_ id: String, percent: Double, fallback: Bool = false) {
+        // Пошёл NSProgress — запасные отрезки времени ему не мешают.
+        if !fallback, percent <= 0 { return }
+        guard tasks[id] != nil, let job = allJobs.first(where: { $0.id == id }) else { return }
+        // Не дёргать экран на каждую сотую процента.
+        guard abs(job.percent - percent) >= 0.5 || (percent >= 100 && job.percent < 100) else { return }
         update(id, percent: percent)
+    }
+
+    /// Сколько озвучек и субтитров легло в пакет — для журнала.
+    private static func cachedTracks(_ location: URL) async -> String {
+        let asset = AVURLAsset(url: location)
+        guard let cache = asset.assetCache else { return "нет assetCache" }
+        var out: [String] = []
+        for (label, kind) in [("audio", AVMediaCharacteristic.audible), ("subs", .legible)] {
+            guard let group = try? await asset.loadMediaSelectionGroup(for: kind) else { continue }
+            let names = await TrackPlan.options(in: group, among: cache.mediaSelectionOptions(in: group)).map(\.name)
+            out.append("\(label)=\(names.count)\(names)")
+        }
+        return out.joined(separator: " ")
     }
 
     fileprivate func didFinishEvents() {

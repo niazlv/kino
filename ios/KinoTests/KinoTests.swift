@@ -277,3 +277,62 @@ final class SessionAndProfileTests: XCTestCase {
         XCTAssertEqual(LocalLibrary.url(for: legacy).standardizedFileURL.path, file.standardizedFileURL.path)
     }
 }
+
+/// Дорожки загрузки и плеера скачанного: повторы kinopub схлопываются,
+/// выбранная озвучка встаёт первой.
+final class TrackPlanTests: XCTestCase {
+    private func t(_ name: String, _ lang: String? = "ru") -> TrackPlan.Track { .init(name: name, language: lang) }
+
+    /// kinopub объявляет каждую дорожку по разу на семейство кодеков.
+    func testDuplicatesCollapseFirstWins() {
+        let tracks = [t("01. Многоголосый. LostFilm (RUS)"), t("02. Оригинал (ENG)", "en"),
+                      t("01. Многоголосый. LostFilm (RUS)"), t("02. Оригинал (ENG)", "en")]
+        XCTAssertEqual(TrackPlan.unique(tracks), [0, 1])
+    }
+
+    /// Разные имена с одним языком — разные дорожки; одно имя на двух языках — тоже.
+    func testDistinctNamesOrLanguagesStay() {
+        XCTAssertEqual(TrackPlan.unique([t("ENG #05", "en"), t("ENG #06", "en")]), [0, 1])
+        XCTAssertEqual(TrackPlan.unique([t("Субтитры", "ru"), t("Субтитры", "en")]), [0, 1])
+        XCTAssertEqual(TrackPlan.unique([t("Субтитры", "ru"), t("субтитры", "RU")]), [0])
+    }
+
+    /// Выбранная студия — первой; не нашлась — следующая подпись (дорожка по умолчанию).
+    func testPreferredFirstWithFallback() {
+        let tracks = [t("01. Дубляж (RUS)"), t("02. Многоголосый. LostFilm (RUS)"), t("03. Оригинал (ENG)", "en"),
+                      t("02. Многоголосый. LostFilm (RUS)")]
+        XCTAssertEqual(TrackPlan.unique(tracks, preferred: ["lostfilm"]), [1, 0, 2])
+        XCTAssertEqual(TrackPlan.unique(tracks, preferred: ["Кураж-Бамбей", "03. Оригинал (ENG)"]), [2, 0, 1])
+        XCTAssertEqual(TrackPlan.unique(tracks, preferred: [nil, ""]), [0, 1, 2])
+    }
+
+    func testMatchesBothWays() {
+        XCTAssertTrue(TrackPlan.matches("01. Многоголосый. LostFilm (RUS)", "LostFilm"))
+        XCTAssertTrue(TrackPlan.matches("AniLiberty", "AniLiberty (rus)"))
+        XCTAssertFalse(TrackPlan.matches("", "LostFilm"))
+        XCTAssertFalse(TrackPlan.matches("Дубляж", ""))
+    }
+
+    /// Субтитры: русские, украинские, английские и языков озвучек; коды
+    /// плейлиста трёхбуквенные («rus», «jpn»), у системы бывают и двухбуквенные.
+    func testSubtitleLanguages() {
+        let wanted = TrackPlan.subtitleLanguages(audio: ["rus", "jpn", nil])
+        XCTAssertEqual(wanted, ["ru", "uk", "en", "ja"])
+        for keep in ["rus", "ru", "ru-RU", "ukr", "eng", "en-US", "jpn", nil, ""] as [String?] {
+            XCTAssertTrue(TrackPlan.keepSubtitle(language: keep, wanted: wanted), "\(keep ?? "nil")")
+        }
+        for drop in ["vie", "tha", "ger", "fre", "zh-Hans"] {
+            XCTAssertFalse(TrackPlan.keepSubtitle(language: drop, wanted: wanted), drop)
+        }
+    }
+
+    /// Описи прежних версий — без поля озвучки — читаются.
+    func testLibraryEntryWithoutVoiceDecodes() throws {
+        let json = """
+        {"id":"5:1:2","titleId":5,"title":"Тьма","season":1,"episode":2,"uri":"Library/x.movpkg","size":1,
+         "addedAt":0,"positionMs":0,"durationMs":0,"watched":false,"dirty":false,"movie":false}
+        """
+        let e = try JSONDecoder().decode(LocalLibrary.Entry.self, from: Data(json.utf8))
+        XCTAssertNil(e.voice)
+    }
+}

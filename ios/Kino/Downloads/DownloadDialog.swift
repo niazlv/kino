@@ -1,7 +1,11 @@
 import SwiftUI
 
 /// Диалог «Скачать» — 1:1 с DownloadDialog.kt, адаптированный под нативную
-/// качалку: одна озвучка на загрузку, файл для офлайна (.movpkg) вместо .mkv.
+/// качалку: файл для офлайна (.movpkg) вместо .mkv. Как и в MKV на Android,
+/// в файл ложатся все озвучки потока; субтитры — только нужных языков
+/// (TrackPlan.subtitleLanguages: у kinopub их до сорока). Выбранная студия решает
+/// площадку (у kinopub все студии — дорожки одного потока, у остальных —
+/// отдельные потоки) и включается в плеере первой.
 struct DownloadDialog: View {
     let app: AppState
     let detail: TitleDetail
@@ -52,7 +56,7 @@ struct DownloadDialog: View {
                     }
                 }
             }
-            PrimaryButton(title: "Скачать · \(countLabel)", busy: busy) {
+            PrimaryButton(title: countLabel.isEmpty ? "Скачать" : "Скачать · \(countLabel)", busy: busy) {
                 Task { await start() }
             }
         }
@@ -84,7 +88,18 @@ struct DownloadDialog: View {
     }
 
     /// Пикер серий: группы по сезонам с чекбоксами.
+    /// Список серий прокручивается в своей рамке: без ScrollView высота
+    /// сверх рамки (45 серий — ~1300 pt) вылезала поверх остальной шторки.
+    /// Высота явная — внутри внешнего ScrollView maxHeight не ограничивает.
     private var episodePicker: some View {
+        let rows = seasons.reduce(0) { $0 + 1 + episodesOf(detail, $1).count }
+        return ScrollView {
+            episodeRows
+        }
+        .frame(height: min(CGFloat(rows) * 34, 360))
+    }
+
+    private var episodeRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(seasons, id: \.self) { s in
                 let eps = episodesOf(detail, s)
@@ -125,7 +140,6 @@ struct DownloadDialog: View {
                 }
             }
         }
-        .frame(maxHeight: 360)
     }
 
     private func checkmark(checked: Bool) -> some View {
@@ -152,6 +166,8 @@ struct DownloadDialog: View {
                         Pill(title: v.title, selected: voice?.key == v.key) { voice = v }
                     }
                 }
+                Text("В файл попадут все озвучки потока и субтитры на русском, украинском, английском и языке оригинала — переключаются в плеере и без сети. Выбранная озвучка включится первой.")
+                    .font(.kinoBodySmall).foregroundStyle(Pal.textFaint)
             }
         }
     }

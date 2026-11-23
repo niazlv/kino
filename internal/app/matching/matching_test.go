@@ -523,3 +523,89 @@ func TestAdopt_PartIsNotSeason(t *testing.T) {
 		t.Fatalf("часть принята за сезон: %+v", got)
 	}
 }
+
+// Однофамилец-дубль рядом с главным тайтлом: у главного номер MAL и много
+// площадок, у дубля одна привязка без MAL. Новый элемент без MAL (AnimeVost)
+// идёт к главному, а не заводит третью карточку.
+func TestDecide_DuplicateNamesakeGoesToPrimary(t *testing.T) {
+	main := kinopubTitle(280, "Магическая битва / Jujutsu Kaisen", 2020, true)
+	main.Refs = append(main.Refs, Ref{ProviderID: "anilibria", ItemID: "a1", SeasonNo: 1, MAL: "40748"},
+		Ref{ProviderID: "yummy", ItemID: "y1", SeasonNo: 1, MAL: "40748"})
+	dup := Candidate{ID: 63356, Kind: "series", Year: 2020, Anime: true,
+		Keys: Keys("Магическая битва", "Jujutsu Kaisen"), Refs: []Ref{{ProviderID: "jutsu_org", ItemID: "j1", SeasonNo: 1}}}
+	in := animeItem("animevost", "2800", "Магическая битва", 2020, 1)
+	in.Original = "Jujutsu Kaisen"
+	d := Decide(in, []Candidate{dup, main})
+	if d.TitleID != 280 || d.SeasonNo != 1 || d.By != "name" {
+		t.Fatalf("решение %+v", d)
+	}
+	// Главный уже держит этот сезон другим элементом той же площадки — это
+	// другое произведение: новый тайтл, как и прежде.
+	main.Refs = append(main.Refs, Ref{ProviderID: "animevost", ItemID: "other", SeasonNo: 1})
+	if d := Decide(in, []Candidate{dup, main}); d.TitleID != 0 {
+		t.Fatalf("сезон занят, а склеено: %+v", d)
+	}
+}
+
+// Две части одного года с разными MAL — по-прежнему лотерея.
+func TestDecide_TwoMALNamesakesStayAmbiguous(t *testing.T) {
+	part1 := Candidate{ID: 211, Kind: "series", Year: 2022, Anime: true, Keys: Keys("Семья шпиона", "Spy x Family"),
+		Refs: []Ref{{ProviderID: "anilibria", ItemID: "1", SeasonNo: 1, MAL: "50265"}}}
+	part2 := Candidate{ID: 53542, Kind: "series", Year: 2022, Anime: true, Keys: Keys("Семья шпиона", "Spy x Family"),
+		Refs: []Ref{{ProviderID: "anilibria", ItemID: "2", SeasonNo: 1, MAL: "50602"}}}
+	in := animeItem("animevost", "3000", "Семья шпиона", 2022, 1)
+	in.Original = "Spy x Family"
+	if d := Decide(in, []Candidate{part1, part2}); d.TitleID != 0 {
+		t.Fatalf("части одного года склеены наугад: %+v", d)
+	}
+	// Без MAL у обоих и поровну привязок — тоже лотерея; больше привязок у
+	// одного — он главный.
+	part1.Refs[0].MAL, part2.Refs[0].MAL = "", ""
+	if d := Decide(in, []Candidate{part1, part2}); d.TitleID != 0 {
+		t.Fatalf("равные без MAL склеены наугад: %+v", d)
+	}
+	part1.Refs = append(part1.Refs, Ref{ProviderID: "yummy", ItemID: "y", SeasonNo: 1})
+	if d := Decide(in, []Candidate{part2, part1}); d.TitleID != 211 {
+		t.Fatalf("главный по числу площадок не выбран: %+v", d)
+	}
+}
+
+// Одиночная карточка (одна привязка без MAL) рядом с тайтлом, у которого
+// MAL есть, с тем же латинским оригиналом и годом — дубль даже при
+// однословном названии («Ганц / Gantz»). Без MAL у второй
+// стороны, с другим годом, с сезоном позже первого или с той же площадкой
+// на том же сезоне — нет.
+func TestShouldMerge_LoneLatinTwin(t *testing.T) {
+	main := Candidate{ID: 56459, Kind: "series", Year: 2004, Anime: true, Keys: Keys("Ганц", "Gantz"),
+		Refs: []Ref{{ProviderID: "yummy", ItemID: "y", SeasonNo: 1, MAL: "384"}, {ProviderID: "animego_me", ItemID: "m", SeasonNo: 1}}}
+	av := Candidate{ID: 128308, Kind: "series", Year: 2004, Anime: true, Keys: Keys("Ганц", "Gantz"),
+		Refs: []Ref{{ProviderID: "animevost", ItemID: "324", SeasonNo: 1}}}
+	if !ShouldMerge(Pair{A: main, B: av}) {
+		t.Fatal("одиночная карточка «Ганц» не слита с главной")
+	}
+	noMAL := main
+	noMAL.Refs = []Ref{{ProviderID: "animego_me", ItemID: "m", SeasonNo: 1}}
+	if ShouldMerge(Pair{A: noMAL, B: av}) {
+		t.Fatal("слито без MAL у главной")
+	}
+	other := av
+	other.Year = 2005
+	if ShouldMerge(Pair{A: main, B: other}) {
+		t.Fatal("слито при другом годе")
+	}
+	later := av
+	later.Refs = []Ref{{ProviderID: "animevost", ItemID: "325", SeasonNo: 2}}
+	if ShouldMerge(Pair{A: main, B: later}) {
+		t.Fatal("слит сезон позже первого по одному слову")
+	}
+	same := av
+	same.Refs = []Ref{{ProviderID: "animego_me", ItemID: "m2", SeasonNo: 1}}
+	if ShouldMerge(Pair{A: main, B: same}) {
+		t.Fatal("слита вторая страница той же площадки на тот же сезон")
+	}
+	cyr := Candidate{ID: 3, Kind: "series", Year: 2004, Anime: true, Keys: Keys("Ганц"),
+		Refs: []Ref{{ProviderID: "animevost", ItemID: "9", SeasonNo: 1}}}
+	if ShouldMerge(Pair{A: main, B: cyr}) {
+		t.Fatal("слито по одному русскому слову без латинского оригинала")
+	}
+}

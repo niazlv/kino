@@ -385,6 +385,21 @@ struct PlayerScreen: View {
         let greenDark: Color
 
         var body: some View {
+            // Длинный список (13 озвучек kinopub в альбомной) не помещается
+            // по высоте — тогда он прокручивается, короткий остаётся как есть.
+            ViewThatFits(in: .vertical) {
+                list
+                ScrollView { list }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(hex: 0x101218, alpha: 0xFA))
+                    .shadow(color: .black.opacity(0.5), radius: 12)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.14)))
+        }
+
+        private var list: some View {
             VStack(alignment: .leading, spacing: 2) {
                 switch kind {
                 case .video:
@@ -398,7 +413,21 @@ struct PlayerScreen: View {
                 case .audio:
                     menuHeader("ОЗВУЧКА")
                     let voices = model.voiceOptions
-                    if voices.isEmpty {
+                    if model.localEntry != nil {
+                        // Скачанное: дорожки из файла, переключение без сети.
+                        if model.localAudio.count < 2 {
+                            Text("В файле одна озвучка")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(model.localAudio, id: \.self) { name in
+                                menuItem(name, selected: model.audioLabel == name) {
+                                    model.setLocalAudio(name)
+                                }
+                            }
+                        }
+                    } else if voices.isEmpty {
                         Text("Дорожка одна, выбирать не из чего")
                             .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.6))
@@ -430,12 +459,6 @@ struct PlayerScreen: View {
                 }
             }
             .padding(6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: 0x101218, alpha: 0xFA))
-                    .shadow(color: .black.opacity(0.5), radius: 12)
-            )
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.14)))
         }
 
         private let speedItems: [(value: Float, label: String)] = [

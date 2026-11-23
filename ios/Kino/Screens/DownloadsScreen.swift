@@ -128,11 +128,14 @@ struct DownloadsScreen: View {
         }
     }
 
+    /// Во время догрузки дорожек видео уже в «Можно смотреть» — строка
+    /// говорит, что именно догружается: «· озвучка 1 из 2 · 40%».
     private func jobLine(_ job: DownloadManager.Job) -> String {
+        let label = job.stage.map { "\(job.episodeLabel) · \($0)" } ?? job.episodeLabel
         switch job.state {
-        case .failed(let why): return "\(job.episodeLabel) · не удалось: \(why)"
-        case .paused: return "\(job.episodeLabel) · на паузе · \(Int(job.percent))%"
-        default: return "\(job.episodeLabel) · \(Int(job.percent))%"
+        case .failed(let why): return "\(label) · не удалось: \(why)"
+        case .paused: return "\(label) · на паузе · \(Int(job.percent))%"
+        default: return "\(label) · \(Int(job.percent))%"
         }
     }
 
