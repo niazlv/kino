@@ -709,6 +709,39 @@ func (r *CatalogRepo) MarkSourcesChecked(ctx context.Context, id kernel.TitleID,
 	return MapError(err)
 }
 
+// SourcesAsked — каких площадок и когда спрашивали о тайтле (app/catalog.SourceAsks).
+func (r *CatalogRepo) SourcesAsked(ctx context.Context, id kernel.TitleID) (map[string]time.Time, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT provider_id, asked_at FROM title_source_asks WHERE title_id = ?`, id)
+	if err != nil {
+		return nil, MapError(err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var p string
+		var at int64
+		if err := rows.Scan(&p, &at); err != nil {
+			return nil, MapError(err)
+		}
+		out[p] = time.UnixMilli(at)
+	}
+	return out, MapError(rows.Err())
+}
+
+// MarkSourcesAsked запоминает, что площадки о тайтле спросили.
+func (r *CatalogRepo) MarkSourcesAsked(ctx context.Context, id kernel.TitleID, providers []string, at time.Time) error {
+	for _, p := range providers {
+		if _, err := r.db.ExecContext(ctx, `
+			INSERT INTO title_source_asks (title_id, provider_id, asked_at) VALUES (?, ?, ?)
+			ON CONFLICT (title_id, provider_id) DO UPDATE SET asked_at = excluded.asked_at`,
+			id, p, at.UnixMilli()); err != nil {
+			return MapError(err)
+		}
+	}
+	return nil
+}
+
 // ---- разделы каталога ----
 
 // BrowsePageInternal — страница раздела; в httpuser её переводит клеевой

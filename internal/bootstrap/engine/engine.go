@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -94,6 +95,14 @@ type Config struct {
 	// Thumbs — запрашивать у площадок кадры серий по одному. По умолчанию нет:
 	// на сериале в сотню серий это сотня лишних запросов ради картинок.
 	Thumbs bool
+	// SourcesMode — кого спрашивать о тайтле (ENGINE_SOURCES_MODE):
+	//   - SourcesFirst (по умолчанию) — поиск ступенями до первой площадки,
+	//     нашедшей достаточно; остальные площадки о тайтле спрашиваются только по
+	//     «Обновить» на его странице;
+	//   - SourcesAll — поиск спрашивает все площадки, а открытие тайтла — каждую
+	//     включённую, которой у него нет (один раз на площадку, память на диске):
+	//     больше серий и озвучек ценой запросов.
+	SourcesMode string
 
 	// User-Agent движка (useragent.go). По умолчанию — браузероподобная подпись с
 	// пометкой приложения: движок не выдаёт себя за чужой браузер. Менять подпись
@@ -106,6 +115,15 @@ type Config struct {
 	UserAgent   string
 	ProviderUAs map[string]string
 }
+
+// Режимы опроса площадок (Config.SourcesMode).
+const (
+	SourcesFirst = "first"
+	SourcesAll   = "all"
+)
+
+// allSources — режим «все площадки».
+func (c Config) allSources() bool { return c.SourcesMode == SourcesAll }
 
 type Engine struct {
 	Cfg Config
@@ -214,16 +232,35 @@ func (a *Engine) Run() error {
 	// Ленивый каталог — тот же, что в core: поиск на площадках по запросу,
 	// тайтл попадает в базу при открытии. Досбора по жанрам (Discovery) в
 	// движке нет — только то, что нашёл сам человек.
+	// В режиме «все площадки» поиск не останавливается на первой нашедшей.
+	minHits := a.Cfg.SearchMinHits
+	if a.Cfg.allSources() {
+		minHits = 0
+	}
 	lazyCatalog := appcatalog.NewLazyCatalog(catalogRepo, catalogRepo,
 		func(id string) (appcatalog.EpisodeSource, error) {
 			return registry.Get(id)
 		}).
 		WithOfferStats(catalogRepo).
-		WithLiveSearch(catalogRepo, liveSearch(registry, pcfg.Priority, 10*time.Second, a.Cfg.SearchMinHits, a.Cfg.SearchPerSource, a.Log)).
+		WithLiveSearch(catalogRepo, liveSearch(registry, pcfg.Priority, 10*time.Second, minHits, a.Cfg.SearchPerSource, a.Log)).
 		WithIDLookup(idLookup(registry, 20*time.Second, a.Log), pcfg.Enabled(providers.LookupProviders())...).
+		// Досбор площадок тайтла: включённые площадки, которых у тайтла нет, — при
+		// открытии (режим «все») или по «Обновить» (любой режим).
+		WithSourceSweep(appcatalog.Sweep{
+			Search:    providerSearch(registry),
+			Lookup:    providerLookup(registry),
+			Providers: func() ([]string, []string) { return sweepProviders(registry) },
+			Asks:      catalogRepo,
+			Auto:      a.Cfg.allSources(),
+			Repeat:    time.Duration(a.Cfg.SearchRepeatHours) * time.Hour,
+			Limit:     a.Cfg.SearchPerSource,
+		}).
 		WithHealth(providerHealth).
 		WithStaleAfter(time.Duration(a.Cfg.RefreshHours)*time.Hour).
 		WithSearchMemory(sqlite.NewSearchMemoryRepo(db), time.Duration(a.Cfg.SearchRepeatHours)*time.Hour).
+		// Память запросов — по набору площадок и режиму: включил человек площадку
+		// или «все площадки» — тот же запрос уйдёт и к ней, а не ждёт недели.
+		WithSearchScope(searchScope(pcfg.IDs, a.Cfg.SourcesMode)).
 		WithEmptySearchRepeat(time.Duration(a.Cfg.SearchEmptyRepeatHours) * time.Hour)
 	if a.Cfg.Thumbs {
 		lazyCatalog.WithThumbnails(registry.EpisodeThumbnail, catalogRepo)
@@ -269,6 +306,7 @@ func (a *Engine) Run() error {
 		WithProviderNames(registry.Name).
 		WithArtFallback(artDirect).
 		WithSkips(skipsSvc).
+		WithTitleRefresh(lazyCatalog).
 		WithLocalMode()
 	if a.Cfg.Thumbs {
 		userSrv.WithThumbnails(lazyCatalog, registry.CanThumb)
@@ -540,6 +578,54 @@ func searchStepwise(ctx context.Context, searchers []titleSearcher, q string, li
 		return nil, errNobodyAnswered
 	}
 	return out, nil
+}
+
+// ---- досбор площадок тайтла ----
+
+// sweepProviders — кого можно спросить о тайтле сейчас: зарегистрированные
+// площадки с поиском по названию и с поиском по номерам.
+func sweepProviders(registry *appprov.Registry) (search, lookup []string) {
+	for _, id := range registry.IDs() {
+		if d, ok := registry.Descriptor(id); ok && d.Has(dprovider.CapSearch) {
+			search = append(search, id)
+		}
+	}
+	for id := range registry.Lookups() {
+		lookup = append(lookup, id)
+	}
+	sort.Strings(lookup)
+	return search, lookup
+}
+
+func providerSearch(registry *appprov.Registry) appcatalog.ProviderSearch {
+	return func(ctx context.Context, id, q string, limit int) ([]dprovider.Title, error) {
+		p, err := registry.Get(id)
+		if err != nil {
+			return nil, err
+		}
+		return p.Search(ctx, q, limit)
+	}
+}
+
+func providerLookup(registry *appprov.Registry) appcatalog.ProviderLookup {
+	return func(ctx context.Context, id string, ids dprovider.ExternalIDs) (dprovider.Title, error) {
+		l, ok := registry.Lookups()[id]
+		if !ok {
+			return dprovider.Title{}, fmt.Errorf("площадка %q без поиска по номерам: %w", id, kernel.ErrUnavailable)
+		}
+		return l.Lookup(ctx, ids)
+	}
+}
+
+// searchScope — от чего зависит память запросов, кроме самого запроса: набор
+// площадок (в любом порядке) и режим опроса.
+func searchScope(ids []string, mode string) string {
+	sorted := append([]string(nil), ids...)
+	sort.Strings(sorted)
+	if mode == "" {
+		mode = SourcesFirst
+	}
+	return mode + ":" + strings.Join(sorted, ",")
 }
 
 func idLookup(registry *appprov.Registry, timeout time.Duration, log *slog.Logger) appcatalog.IDLookup {

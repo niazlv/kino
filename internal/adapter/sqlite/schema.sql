@@ -176,3 +176,13 @@ CREATE TABLE IF NOT EXISTS search_queries (
     -- сколько нашли: пустота помнится короче находок
     hits      INTEGER NOT NULL DEFAULT 1
 );
+
+-- Каких площадок спрашивали о тайтле (досбор площадок, LazyCatalog.WithSourceSweep):
+-- площадка, включённая позже, спрашивается о тайтле один раз, а не на каждом
+-- открытии; ответившая «нет» — снова не раньше срока.
+CREATE TABLE IF NOT EXISTS title_source_asks (
+    title_id    INTEGER NOT NULL REFERENCES canonical_titles(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL,
+    asked_at    INTEGER NOT NULL,
+    PRIMARY KEY (title_id, provider_id)
+);

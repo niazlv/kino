@@ -42,6 +42,9 @@ func main() {
 		SearchMinHits:          envInt("ENGINE_SEARCH_MIN_HITS", 3),
 		SearchPerSource:        envInt("ENGINE_SEARCH_PER_SOURCE", 4),
 		Thumbs:                 os.Getenv("ENGINE_THUMBS") == "1",
+		// Кого спрашивать о тайтле: first — первую нашедшую (по умолчанию), all — все
+		// включённые (больше серий и озвучек ценой запросов).
+		SourcesMode: sourcesMode(os.Getenv("ENGINE_SOURCES_MODE")),
 		// User-Agent: подпись приложения (его версия) и то, что человек задал сам.
 		AppUA:       os.Getenv("ENGINE_APP_UA"),
 		UserAgent:   os.Getenv("ENGINE_USER_AGENT"),
@@ -67,6 +70,14 @@ func envInt(k string, def int) int {
 		}
 	}
 	return def
+}
+
+// sourcesMode — режим опроса площадок; неизвестное — бережный режим по умолчанию.
+func sourcesMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), engine.SourcesAll) {
+		return engine.SourcesAll
+	}
+	return engine.SourcesFirst
 }
 
 func splitList(v string) []string {

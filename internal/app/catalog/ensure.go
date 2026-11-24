@@ -70,6 +70,11 @@ type LazyCatalog struct {
 
 	health ProviderHealth
 
+	// sweep — досбор площадок тайтла на устройстве (sweep.go); sweeping — тайтлы,
+	// о которых площадки спрашиваются прямо сейчас.
+	sweep    *Sweep
+	sweeping map[kernel.TitleID]chan struct{}
+
 	// stale — через сколько перечитывать серии незавершённого сериала при
 	// открытии; 0 — стандартные сутки (staleAfter). См. WithStaleAfter.
 	stale time.Duration
@@ -77,6 +82,7 @@ type LazyCatalog struct {
 	searchMem         SearchMemory
 	searchRepeat      time.Duration
 	searchEmptyRepeat time.Duration
+	searchScope       string
 
 	mu    sync.Mutex
 	tried map[kernel.ProviderRef]time.Time
@@ -170,6 +176,22 @@ const emptySearchRepeat = 12 * time.Hour
 func (c *LazyCatalog) WithEmptySearchRepeat(d time.Duration) *LazyCatalog {
 	c.searchEmptyRepeat = d
 	return c
+}
+
+// WithSearchScope — от чего, кроме самого запроса, зависит память о нём: на
+// устройстве это набор включённых площадок и режим опроса. Запрос, который помнится
+// «спрошен», спрашивали у ДРУГИХ площадок; включил человек новую — тот же запрос
+// должен уйти и к ней, а не ждать срока памяти.
+func (c *LazyCatalog) WithSearchScope(scope string) *LazyCatalog {
+	c.searchScope = scope
+	return c
+}
+
+func (c *LazyCatalog) memKey(key string) string {
+	if c.searchScope == "" || key == "" {
+		return key
+	}
+	return key + " @" + c.searchScope
 }
 
 func (c *LazyCatalog) emptyRepeat() time.Duration {
@@ -297,7 +319,7 @@ func (c *LazyCatalog) liveSearch(ctx context.Context, q string, limit int) []ker
 	// Этот запрос уже спрашивали у площадок не так давно — второй раз не идём,
 	// сколько бы он ни дал в первый: найденное уже в каталоге.
 	if c.searchMem != nil && key != "" {
-		if at, hits, err := c.searchMem.Asked(ctx, key); err == nil && !at.IsZero() {
+		if at, hits, err := c.searchMem.Asked(ctx, c.memKey(key)); err == nil && !at.IsZero() {
 			ttl := c.searchRepeat
 			if hits == 0 {
 				ttl = c.emptyRepeat()
@@ -332,7 +354,7 @@ func (c *LazyCatalog) liveSearch(ctx context.Context, q string, limit int) []ker
 				// Площадки ответили (пусть и пустотой) — запомнить на диске.
 				// Если не ответили (нет сети), не помним: иначе офлайн-запрос
 				// пропал бы на неделю.
-				_ = c.searchMem.MarkAsked(bg, key, time.Now(), len(ids))
+				_ = c.searchMem.MarkAsked(bg, c.memKey(key), time.Now(), len(ids))
 			}
 			c.mu.Lock()
 			run.ids, run.ok, run.at = ids, ok, time.Now()
@@ -458,6 +480,12 @@ func (c *LazyCatalog) WithIDLookup(fn IDLookup, ids ...string) *LazyCatalog {
 
 // discover запускает досбор площадок тайтла в фоне, если он нужен.
 func (c *LazyCatalog) discover(ctx context.Context, t catalog.Title) {
+	if c.sweep != nil && c.sweep.Auto {
+		// Досбор всех площадок спрашивает и по номерам, и по названию — второй
+		// круг теми же запросами был бы лишним.
+		c.autoSweep(ctx, t)
+		return
+	}
 	c.discoverByIDs(ctx, t)
 	c.discoverByName(ctx, t)
 }

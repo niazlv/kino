@@ -1,5 +1,7 @@
 package ru.sorewa.kino.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
@@ -169,7 +171,22 @@ fun Modifier.cardClick(
     val tv = LocalTv.current
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (tv && focused) focusScale else 1f, tween(160), label = "focus")
+    // Телефон: под пальцем карточка чуть вдавливается и отпружинивает обратно
+    // (Material 3 Expressive). ТВ: увеличение в фокусе, как было.
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        when {
+            tv -> if (focused) focusScale else 1f
+            pressed -> 0.96f
+            else -> 1f
+        },
+        when {
+            tv -> tween(160)
+            pressed -> ru.sorewa.kino.ui.theme.KinoMotion.fastSpatial()
+            else -> ru.sorewa.kino.ui.theme.KinoMotion.bouncy()
+        },
+        label = "focus",
+    )
     return this
         .scale(scale)
         .then(if (tv && focused) Modifier.shadow(18.dp, shape, ambientColor = Color.Black, spotColor = Color.Black) else Modifier)
@@ -181,6 +198,22 @@ fun Modifier.cardClick(
             onLongClick = onLongClick,
             onClick = onClick,
         )
+}
+
+/**
+ * Отклик на нажатие для кнопок и таблеток телефона: лёгкое сжатие под пальцем
+ * и пружина обратно. На ТВ ничего не делает — там отклик даёт фокус.
+ */
+@Composable
+fun Modifier.pressScale(source: androidx.compose.foundation.interaction.InteractionSource, pressedScale: Float = 0.95f): Modifier {
+    if (LocalTv.current) return this
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(
+        if (pressed) pressedScale else 1f,
+        if (pressed) ru.sorewa.kino.ui.theme.KinoMotion.fastSpatial() else ru.sorewa.kino.ui.theme.KinoMotion.bouncy(),
+        label = "press",
+    )
+    return graphicsLayer { scaleX = s; scaleY = s }
 }
 
 // ─── Картинки ────────────────────────────────────────────────────────────
@@ -543,8 +576,25 @@ fun <T> PillRow(
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     itemModifier: (T) -> Modifier = { Modifier },
     leadingOf: (T) -> ImageVector? = { null },
+    followSelected: Boolean = false,
 ) {
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Выбор пришёл не от касания таблетки (свайп страниц) — ряд подкручивается
+    // к ней, как вкладки Material. На ТВ ряд ведёт фокус, там это не нужно.
+    if (followSelected) {
+        LaunchedEffect(selected) {
+            val i = options.indexOfFirst { it.first == selected }
+            if (i >= 0) {
+                val info = rowState.layoutInfo
+                val item = info.visibleItemsInfo.firstOrNull { it.index == i }
+                val visible = item != null && item.offset >= info.viewportStartOffset &&
+                    item.offset + item.size <= info.viewportEndOffset
+                if (!visible) rowState.animateScrollToItem(i)
+            }
+        }
+    }
     LazyRow(
+        state = rowState,
         modifier = modifier
             .fillMaxWidth()
             .focusProperties {
@@ -589,6 +639,7 @@ fun Pill(
     }
     Row(
         modifier
+            .pressScale(source)
             .clip(shape)
             .background(bg)
             .then(if (!selected && !(tv && focused)) Modifier.border(1.dp, Stroke, shape) else Modifier)
@@ -625,6 +676,7 @@ fun IconAction(
     val focused by source.collectIsFocusedAsState()
     Column(
         modifier
+            .pressScale(source, 0.92f)
             .clip(RoundedCornerShape(14.dp))
             .background(if (tv && focused) Color.White else Color.Transparent)
             .clickable(interactionSource = source, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick)
@@ -672,7 +724,7 @@ fun PrimaryButton(
         onClick = onClick,
         enabled = enabled && !busy,
         interactionSource = source,
-        modifier = modifier.height(if (tv) 52.dp else 52.dp),
+        modifier = modifier.pressScale(source, 0.97f).height(52.dp),
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (tv && focused) Color.White else Accent,
@@ -708,7 +760,7 @@ fun SecondaryButton(
         onClick = onClick,
         enabled = enabled,
         interactionSource = source,
-        modifier = modifier.height(52.dp),
+        modifier = modifier.pressScale(source, 0.97f).height(52.dp),
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (tv && focused) Color.White else Surface3,
@@ -770,7 +822,7 @@ fun LoadMore(
 
 @Composable
 fun CenterSpinner(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxSize().padding(bottom = LocalBottomBarInset.current), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(Modifier.size(36.dp), strokeWidth = 3.dp, color = Accent)
     }
 }

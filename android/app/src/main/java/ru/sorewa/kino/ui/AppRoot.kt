@@ -1,11 +1,27 @@
 package ru.sorewa.kino.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Constraints
+import kotlinx.coroutines.launch
+import ru.sorewa.kino.ui.theme.KinoMotion
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,9 +49,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,8 +60,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavGraphBuilder
@@ -69,9 +90,11 @@ import ru.sorewa.kino.ui.phone.SearchScreen
 import ru.sorewa.kino.ui.phone.SettingsScreen
 import ru.sorewa.kino.ui.phone.TitleScreen
 import ru.sorewa.kino.ui.theme.Accent
+import ru.sorewa.kino.ui.theme.NavMotion
+import ru.sorewa.kino.ui.theme.NavPage
+import ru.sorewa.kino.ui.theme.NavShift
 import ru.sorewa.kino.ui.theme.Surface1
 import ru.sorewa.kino.ui.theme.Surface2
-import ru.sorewa.kino.ui.theme.Stroke
 import ru.sorewa.kino.ui.theme.TextDim
 import ru.sorewa.kino.ui.theme.TextMain
 
@@ -194,30 +217,50 @@ fun OfflineRoot(onRetry: () -> Unit) {
     val nav = rememberNavController()
     // Без нижней панели: системная полоска жестов не должна лечь на список.
     Box(Modifier.fillMaxSize().navigationBarsPadding()) {
+    val isTop: (String?) -> Boolean = { it == "downloads" }
+    val offRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+    val density = LocalDensity.current
+    PredictiveBackHost(Modifier.fillMaxSize()) { back ->
+    val shift = with(density) { NavShift.roundToPx() }
+    val motion = remember(back, shift) { NavMotion(isTop, back, shift) }
     NavHost(
         navController = nav,
         startDestination = "downloads",
-        enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) },
-        exitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) },
+        modifier = Modifier.swipeBack(UiPrefs.swipeBack && offRoute != null && !isTop(offRoute)),
+        enterTransition = motion.enter,
+        exitTransition = motion.exit,
+        popEnterTransition = motion.popEnter,
+        popExitTransition = motion.popExit,
     ) {
-        composable("downloads") {
+        page("downloads") {
             Column(Modifier.fillMaxSize()) {
                 OfflineBanner(onRetry, Modifier.statusBarsPadding())
                 DownloadsScreen(nav, offline = true)
             }
         }
-        composable(
+        page(
             "title/{id}",
             arguments = listOf(navArgument("id") { type = NavType.LongType }),
         ) { entry -> TitleScreen(nav, entry.arguments?.getLong("id") ?: 0, offlineOnly = true) }
         localTitleRoute(nav)
     }
     }
+    }
 }
+
+/**
+ * Экран телефона: непрозрачный фон и скругление углов на уходе (см. [NavPage]).
+ * ТВ-маршруты (TvRoot) этим не пользуются — там свои переходы под пульт.
+ */
+fun NavGraphBuilder.page(
+    route: String,
+    arguments: List<NamedNavArgument> = emptyList(),
+    content: @Composable (NavBackStackEntry) -> Unit,
+) = composable(route, arguments) { entry -> NavPage { content(entry) } }
 
 /** Скачанное без тайтла в каталоге: страница по названию папки. */
 fun NavGraphBuilder.localTitleRoute(nav: NavHostController) {
-    composable(
+    page(
         "local?name={name}",
         arguments = listOf(navArgument("name") { type = NavType.StringType; defaultValue = "" }),
     ) { entry -> TitleScreen(nav, 0, localName = entry.arguments?.getString("name").orEmpty()) }
@@ -248,40 +291,59 @@ private fun NavRoot() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    // Тайтл рисуется во всю высоту под строкой состояния, но панель внизу
-    // остаётся — с тайтла можно сразу уйти в другой раздел.
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = { BottomBar(nav, route) },
-    ) { padding ->
-        Box(Modifier.padding(padding)) {
-            NavHost(
-                navController = nav,
-                startDestination = "home",
-                enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) },
-                exitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) },
-            ) {
-                phoneGraph(nav)
+    val glass = rememberGlassSource()
+    val density = LocalDensity.current
+    var barHeight by remember { mutableStateOf(0.dp) }
+    val isTop: (String?) -> Boolean = { r -> bottomItems.any { it.route == r } }
+    // Экраны — во всю высоту: нижняя панель стеклянная и лежит поверх них,
+    // под ней просвечивает прокрутка. Списки сами отступают снизу на её
+    // высоту (LocalBottomBarInset), чтобы последний ряд не прятался под ней.
+    // Тайтл рисуется и под строкой состояния; панель внизу остаётся на всех
+    // экранах — с тайтла можно сразу уйти в другой раздел.
+    Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalBottomBarInset provides barHeight) {
+            PredictiveBackHost(Modifier.fillMaxSize()) { back ->
+                val shift = with(density) { NavShift.roundToPx() }
+                val motion = remember(back, shift) { NavMotion(isTop, back, shift) }
+                NavHost(
+                    navController = nav,
+                    startDestination = "home",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .glassSource(glass)
+                        .swipeBack(UiPrefs.swipeBack && route != null && !isTop(route)),
+                    enterTransition = motion.enter,
+                    exitTransition = motion.exit,
+                    popEnterTransition = motion.popEnter,
+                    popExitTransition = motion.popExit,
+                ) {
+                    phoneGraph(nav)
+                }
             }
         }
+        val barModifier = Modifier
+            .align(Alignment.BottomCenter)
+            .onSizeChanged { barHeight = with(density) { it.height.toDp() } }
+        if (UiPrefs.capsuleBar) CapsuleBar(nav, route, glass, barModifier)
+        else BottomBar(nav, route, glass, barModifier)
     }
 }
 
-/** Маршруты, общие для телефона и ТВ. */
+/** Маршруты телефона (у ТВ свой граф в TvRoot). */
 fun NavGraphBuilder.phoneGraph(nav: NavHostController) {
-    composable("home") { HomeScreen(nav) }
-    composable("catalog") { CatalogScreen(nav) }
-    composable("search") { SearchScreen(nav) }
-    composable(
+    page("home") { HomeScreen(nav) }
+    page("catalog") { CatalogScreen(nav) }
+    page("search") { SearchScreen(nav) }
+    page(
         "mine?tab={tab}",
         arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 }),
     ) { entry -> MineScreen(nav, entry.arguments?.getInt("tab") ?: 0) }
-    composable("downloads") { DownloadsScreen(nav) }
-    composable("history") { HistoryScreen(nav) }
-    composable("settings") { SettingsScreen(nav) }
-    composable("link") { LinkDeviceScreen(nav) }
-    composable("engine") { ru.sorewa.kino.ui.phone.EngineSettingsScreen(nav) }
-    composable(
+    page("downloads") { DownloadsScreen(nav) }
+    page("history") { HistoryScreen(nav) }
+    page("settings") { SettingsScreen(nav) }
+    page("link") { LinkDeviceScreen(nav) }
+    page("engine") { ru.sorewa.kino.ui.phone.EngineSettingsScreen(nav) }
+    page(
         "title/{id}",
         arguments = listOf(navArgument("id") { type = NavType.LongType }),
     ) { entry ->
@@ -290,29 +352,38 @@ fun NavGraphBuilder.phoneGraph(nav: NavHostController) {
     localTitleRoute(nav)
 }
 
-@Composable
-private fun BottomBar(nav: NavHostController, current: String?) {
-    // Подсвечен раздел, из которого открыт текущий экран (тайтл, история…):
-    // ближайший к вершине стека пункт нижней панели.
-    @Suppress("UNUSED_VARIABLE") val tick = current
-    val section = nav.currentBackStack.value
+/**
+ * Подсвечен раздел, из которого открыт текущий экран (тайтл, история…):
+ * ближайший к вершине стека пункт нижней панели. [current] — только чтобы
+ * пересчитать при смене экрана.
+ */
+private fun currentSection(nav: NavHostController, @Suppress("UNUSED_PARAMETER") current: String?): String? =
+    nav.currentBackStack.value
         .mapNotNull { it.destination.route }
         .lastOrNull { r -> bottomItems.any { it.route == r } }
-    Column {
-        HorizontalDivider(color = Stroke, thickness = 1.dp)
-        NavigationBar(containerColor = Surface1, tonalElevation = 0.dp) {
+
+private fun openSection(nav: NavHostController, item: BottomItem) {
+    nav.navigate(item.route.substringBefore('?')) {
+        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+/** Панель во всю ширину, до низа экрана — как системные панели Android 17 (Material 3). */
+@Composable
+private fun BottomBar(nav: NavHostController, current: String?, glass: GlassSource, modifier: Modifier = Modifier) {
+    val section = currentSection(nav, current)
+    // Стекло и под полоской жестов. Вместо сплошной черты сверху — тонкий
+    // светлый край стекла.
+    Column(modifier.glass(glass, tint = Surface1.copy(alpha = 0.5f), fallback = Surface1, rim = false)) {
+        HorizontalDivider(color = Color.White.copy(alpha = 0.07f), thickness = 1.dp)
+        NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
             bottomItems.forEach { item ->
                 val selected = section == item.route
                 NavigationBarItem(
                     selected = selected,
-                    onClick = {
-                        val target = item.route.substringBefore('?')
-                        nav.navigate(target) {
-                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    onClick = { openSection(nav, item) },
                     icon = { Icon(if (selected) item.iconOn else item.icon, contentDescription = item.label) },
                     label = { Text(item.label, style = MaterialTheme.typography.labelSmall) },
                     colors = NavigationBarItemDefaults.colors(
@@ -325,6 +396,107 @@ private fun BottomBar(nav: NavHostController, current: String?) {
                 )
             }
         }
+    }
+}
+
+/**
+ * Нижняя панель плавающей капсулой, как в iOS 26: стекло с бликом по краю,
+ * над полоской жестов и с отступами по бокам — прокрутка видна и вокруг неё.
+ * Выбранный раздел — светлая «капля» под значком. При переходе она перетекает:
+ * передний край бежит быстрее заднего, капля на ходу вытягивается и
+ * собирается обратно на новом месте.
+ */
+@Composable
+private fun CapsuleBar(nav: NavHostController, current: String?, glass: GlassSource, modifier: Modifier = Modifier) {
+    val section = currentSection(nav, current)
+    val index = bottomItems.indexOfFirst { it.route == section }
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .widthIn(max = 520.dp)
+                .fillMaxWidth()
+                .height(64.dp)
+                .shadow(20.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .glass(glass, shape, tint = Surface1.copy(alpha = 0.45f), fallback = Surface1, blur = 24.dp)
+                .padding(4.dp),
+        ) {
+            Drop(index, bottomItems.size)
+            Row(Modifier.fillMaxSize()) {
+                bottomItems.forEachIndexed { i, item ->
+                    CapsuleItem(item, i == index, Modifier.weight(1f)) { openSection(nav, item) }
+                }
+            }
+        }
+    }
+}
+
+/** «Капля» выбранного раздела: края — две пружины разной жёсткости. */
+@Composable
+private fun Drop(index: Int, count: Int) {
+    val left = remember { Animatable(0f) }
+    val right = remember { Animatable(0f) }
+    var cell by remember { mutableStateOf(0f) }
+    val placedCell = remember { floatArrayOf(0f) }
+    LaunchedEffect(index, cell) {
+        if (index < 0 || cell <= 0f) return@LaunchedEffect
+        val l = index * cell
+        val r = l + cell
+        // Первое появление и смена ширины (поворот экрана) — сразу на место.
+        if (placedCell[0] != cell) {
+            placedCell[0] = cell
+            left.snapTo(l)
+            right.snapTo(r)
+            return@LaunchedEffect
+        }
+        val toRight = l > left.value
+        val lead = spring<Float>(dampingRatio = 0.7f, stiffness = 900f)
+        val trail = spring<Float>(dampingRatio = 0.78f, stiffness = 300f)
+        launch { left.animateTo(l, if (toRight) trail else lead) }
+        launch { right.animateTo(r, if (toRight) lead else trail) }
+    }
+    if (index < 0) return
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .layout { m, c ->
+                cell = c.maxWidth.toFloat() / count
+                val l = left.value
+                val w = (right.value - l).roundToInt().coerceIn(0, c.maxWidth)
+                val p = m.measure(Constraints.fixed(w, c.maxHeight))
+                layout(c.maxWidth, c.maxHeight) { p.place(l.roundToInt(), 0) }
+            }
+            .background(Color.White.copy(alpha = 0.10f), shape)
+            .border(
+                1.dp,
+                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f), Color.White.copy(alpha = 0.03f))),
+                shape,
+            ),
+    )
+}
+
+@Composable
+private fun CapsuleItem(item: BottomItem, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val tint by animateColorAsState(if (selected) Accent else TextDim, KinoMotion.effects(), label = "tab")
+    Column(
+        modifier
+            .fillMaxHeight()
+            .selectable(selected, source, indication = null, role = Role.Tab, onClick = onClick)
+            .pressScale(source, 0.86f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(if (selected) item.iconOn else item.icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(item.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
     }
 }
 

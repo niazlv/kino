@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +113,21 @@ const (
 type cachedVoices struct {
 	list VoiceList
 	till time.Time
+	// offers — с каких элементов площадок собран список (offersKey). К серии
+	// привязалась новая площадка («Обновить», досбор) — список собирается заново,
+	// не дожидаясь срока: иначе её озвучки не видны до десяти минут.
+	offers string
+}
+
+// offersKey — набор элементов площадок серии, без учёта порядка.
+func offersKey(offers []catalog.Offer) string {
+	keys := make([]string, 0, len(offers))
+	for _, o := range offers {
+		keys = append(keys, o.Ref.ProviderID+"\x00"+o.Ref.ItemID+"\x00"+
+			strconv.Itoa(o.SeasonNo)+"\x00"+strconv.Itoa(o.EpisodeNo))
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\x01")
 }
 
 // Voices — озвучки серии по всем её площадкам, одним списком.
@@ -127,17 +144,20 @@ func (s *Service) voicesWithin(ctx context.Context, ep kernel.EpisodeID, wait ti
 		return VoiceList{}, nil
 	}
 	now := s.clock.Now()
-	s.voiceMu.Lock()
-	c, ok := s.voiceCache[ep]
-	s.voiceMu.Unlock()
-	if ok && now.Before(c.till) {
-		return c.list, nil
-	}
-
+	// Площадки серии читаются и при живой памяти: это запрос к своей базе, а не к
+	// площадкам, и только так видно, что к серии привязалась новая.
 	offers, err := s.titles.Offers(ctx, ep)
 	if err != nil {
 		return VoiceList{}, err
 	}
+	key := offersKey(offers)
+	s.voiceMu.Lock()
+	c, ok := s.voiceCache[ep]
+	s.voiceMu.Unlock()
+	if ok && now.Before(c.till) && c.offers == key {
+		return c.list, nil
+	}
+
 	ranked := catalog.Rank(offers, catalog.Choice{})
 	answers := make([][]provider.Voice, len(ranked))
 	errs := make([]error, len(ranked))
@@ -197,7 +217,7 @@ func (s *Service) voicesWithin(ctx context.Context, ep kernel.EpisodeID, wait ti
 			s.voiceCache = map[kernel.EpisodeID]cachedVoices{}
 		}
 	}
-	s.voiceCache[ep] = cachedVoices{list: list, till: now.Add(ttl)}
+	s.voiceCache[ep] = cachedVoices{list: list, till: now.Add(ttl), offers: key}
 	s.voiceMu.Unlock()
 	return list, nil
 }

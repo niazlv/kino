@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -238,7 +239,7 @@ fun DownloadsScreen(nav: NavHostController?, offline: Boolean = false) {
     val cols = if (tv) 6 else ((maxWidth.value - 40f) / 112f).toInt().coerceIn(3, 6)
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
+        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomBarInset.current),
     ) {
         item(key = "head") {
             ScreenHeader(
@@ -253,17 +254,17 @@ fun DownloadsScreen(nav: NavHostController?, offline: Boolean = false) {
 
         // Идущая качалка — карточка статуса с паузой/отменой.
         if (dl.running != null) {
-            item(key = "dl") { Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadStatusCard(dl) } }
+            item(key = "dl") { Box((if (tv) Modifier else Modifier.animateItem()).padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadStatusCard(dl) } }
         } else if (dl.lastError.isNotEmpty() || dl.retryAt > 0) {
             item(key = "dlerr") {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadFailCard(dl) }
+                Box((if (tv) Modifier else Modifier.animateItem()).padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadFailCard(dl) }
             }
         } else if (dl.queued > 0) {
             // Поставлено, но ещё не пошло (служба переносит прошлое скачанное
             // или ждёт сеть): без этой карточки экран был пуст, и казалось,
             // что нажатие «Скачать» не сработало.
             item(key = "dlq") {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadQueuedCard(dl) }
+                Box((if (tv) Modifier else Modifier.animateItem()).padding(horizontal = 16.dp, vertical = 6.dp)) { DownloadQueuedCard(dl) }
             }
         }
 
@@ -299,7 +300,7 @@ fun DownloadsScreen(nav: NavHostController?, offline: Boolean = false) {
             }
             items(groups.chunked(cols), key = { row -> row.first().key }) { row ->
                 Row(
-                    Modifier.fillMaxWidth().padding(start = if (tv) 0.dp else 20.dp, end = if (tv) 0.dp else 20.dp, top = 6.dp, bottom = 8.dp),
+                    (if (tv) Modifier else Modifier.animateItem()).fillMaxWidth().padding(start = if (tv) 0.dp else 20.dp, end = if (tv) 0.dp else 20.dp, top = 6.dp, bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 12.dp),
                 ) {
                     row.forEach { t ->
@@ -325,7 +326,7 @@ fun DownloadsScreen(nav: NavHostController?, offline: Boolean = false) {
 
         if (entries.isNotEmpty()) {
             item(key = "storage") {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                Box((if (tv) Modifier else Modifier.animateItem()).padding(horizontal = 16.dp, vertical = 10.dp)) {
                     StorageCard(
                         entries = entries,
                         prep = if (offline || tv) null else prep,

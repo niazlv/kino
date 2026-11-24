@@ -54,6 +54,8 @@ type Server struct {
 	canThumb func(providerID string) bool
 	// skips — разметка пропуска, см. WithSkips.
 	skips Skips
+	// refresher — «Обновить» на странице тайтла, см. WithTitleRefresh.
+	refresher TitleRefresher
 	// local — локальный движок (ADR-0015): витрине это видно из /me, чтобы
 	// не рисовать выход, пароль и подключение устройств.
 	local bool
@@ -78,6 +80,18 @@ func (s *Server) WithThumbnails(t EpisodeThumbnails, canThumb func(providerID st
 // основной не ответил за artHedge или отказал.
 func (s *Server) WithArtFallback(c *http.Client) *Server {
 	s.artFallback = c
+	return s
+}
+
+// TitleRefresher — «Обновить» тайтла: спросить о нём площадки заново.
+type TitleRefresher interface {
+	Refresh(ctx context.Context, id kernel.TitleID) (appcatalog.RefreshReport, error)
+}
+
+// WithTitleRefresh включает POST /titles/{id}/refresh. Без него ручка отвечает 404:
+// так клиент узнаёт, что кнопки «Обновить» здесь нет.
+func (s *Server) WithTitleRefresh(r TitleRefresher) *Server {
+	s.refresher = r
 	return s
 }
 
@@ -183,6 +197,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/browse", s.handleBrowse)
 			r.Get("/genres", s.handleGenres)
 			r.Get("/titles/{titleID}", s.handleTitle)
+			// «Обновить»: площадки тайтла и его серии — заново, по просьбе человека.
+			r.Post("/titles/{titleID}/refresh", s.handleRefreshTitle)
 			r.Get("/titles/{titleID}/art", s.handleArt)
 			r.Get("/episodes/{episodeID}/art", s.handleEpisodeArt)
 			r.Get("/episodes/{episodeID}/skips", s.handleSkips)

@@ -247,6 +247,24 @@ data class TitleDetail(
     val prefs: Prefs? = null,
 )
 
+/**
+ * Ответ «Обновить» на странице тайтла (локальный движок): кого спросили, кто
+ * привязался, у кого перечитаны серии. [waitSec] > 0 — тайтл только что обновляли,
+ * площадки не спрашивались.
+ */
+@Serializable
+data class TitleRefresh(
+    val asked: List<SourceRef> = emptyList(),
+    val added: List<SourceRef> = emptyList(),
+    val failed: List<SourceRef> = emptyList(),
+    val refetched: List<SourceRef> = emptyList(),
+    val refetchFailed: List<SourceRef> = emptyList(),
+    val sources: List<SourceRef> = emptyList(),
+    val episodesBefore: Int = 0,
+    val episodesAfter: Int = 0,
+    val waitSec: Int = 0,
+)
+
 @Serializable
 data class ProgressState(
     val positionMs: Long = 0,

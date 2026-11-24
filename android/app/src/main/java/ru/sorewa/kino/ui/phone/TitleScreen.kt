@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import android.os.Build
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RemoveDone
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Visibility
@@ -55,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -98,6 +102,9 @@ import ru.sorewa.kino.ui.cardClick
 import ru.sorewa.kino.ui.fmtMins
 import ru.sorewa.kino.ui.playEpisode
 import ru.sorewa.kino.ui.speciesWord
+import ru.sorewa.kino.ui.glass
+import ru.sorewa.kino.ui.glassSource
+import ru.sorewa.kino.ui.rememberGlassSource
 import ru.sorewa.kino.ui.splitTitle
 import ru.sorewa.kino.ui.theme.Accent
 import ru.sorewa.kino.ui.theme.Bg
@@ -195,6 +202,11 @@ fun TitleScreen(
     // Скачанные серии тайтла по «сезон×серия».
     var local by remember { mutableStateOf<Map<Pair<Int, Int>, LocalLibrary.Entry>>(emptyMap()) }
     var removeLocal by remember { mutableStateOf<LocalLibrary.Entry?>(null) }
+    // «Обновить» (только движок на устройстве): площадки о тайтле спрашиваются заново.
+    var refreshing by remember { mutableStateOf(false) }
+    // Сколько раз «Обновить» прошло: озвучки перечитываются и при той же серии —
+    // у неё могли появиться новые площадки.
+    var refreshed by remember { mutableStateOf(0) }
 
     suspend fun readLocal() {
         local = withContext(Dispatchers.IO) {
@@ -284,6 +296,27 @@ fun TitleScreen(
 
     LaunchedEffect(titleId, localName) { load() }
 
+    /**
+     * «Обновить»: движок спрашивает о тайтле включённые площадки, которых у него ещё нет,
+     * и перечитывает серии всех его площадок. Итог — коротко, затем страница заново.
+     */
+    fun refresh() {
+        if (refreshing) return
+        refreshing = true
+        scope.launch {
+            val msg = try {
+                val r = api.refreshTitle(titleId)
+                if (r.waitSec == 0) refreshed++
+                refreshSummary(r)
+            } catch (e: Exception) {
+                "Не удалось обновить: " + ru.sorewa.kino.data.describeApiError(e)
+            }
+            refreshing = false
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+            load()
+        }
+    }
+
     // Опись изменилась (позиция из плеера, докачалась серия, стёрли файл) —
     // скачанные серии на странице перечитываются без похода на сервер.
     val libChanges by container.library.changes.collectAsStateWithLifecycle()
@@ -309,7 +342,7 @@ fun TitleScreen(
     // Озвучки — по серии, что включится по большой кнопке: общий список
     // студий, без похода в плеер.
     val upId = detail?.takeIf { !offlineMode }?.let { nextUp(it)?.episode?.id }
-    LaunchedEffect(upId) {
+    LaunchedEffect(upId, refreshed) {
         val id = upId ?: return@LaunchedEffect
         try {
             val list = api.voices(id)
@@ -430,12 +463,33 @@ fun TitleScreen(
     val raw = detail
     // Позиции скачанных серий: без сети — свои, с сетью — ещё не доехавшие.
     val d = remember(raw, local, offlineMode) { raw?.let { withLocal(it, local, offlineMode) } }
+    // Открыли из списка — карточка уже есть: пока сервер отвечает, страница
+    // въезжает с обложкой и названием, а остальное потом проявляется под ними.
+    val peek = remember(titleId) {
+        if (offlineOnly || localName != null) null else ru.sorewa.kino.ui.TitlePeek.get(titleId)?.let { TitleDetail(it) }
+    }
+    var peeked by remember { mutableStateOf(false) }
     val listStateHolder = remember { mutableStateOf<androidx.compose.foundation.lazy.LazyListState?>(null) }
+    val glass = rememberGlassSource()
     Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().glassSource(glass)) {
         when {
             error.isNotEmpty() -> Box(Modifier.statusBarsPadding().padding(top = 48.dp)) { ErrorView(error) { error = ""; load() } }
+            d == null && peek != null -> {
+                LaunchedEffect(Unit) { peeked = true }
+                LazyColumn(Modifier.fillMaxSize(), userScrollEnabled = false) {
+                    item { TitleHeader(peek, null) }
+                    item { Box(Modifier.fillMaxWidth().height(240.dp)) { CenterSpinner() } }
+                }
+            }
             d == null -> CenterSpinner()
             else -> {
+                // Под шапкой из списка остальное проявляется, а не появляется разом.
+                val appear = remember { androidx.compose.animation.core.Animatable(if (peeked) 0f else 1f) }
+                LaunchedEffect(Unit) {
+                    appear.animateTo(1f, androidx.compose.animation.core.tween(280, easing = ru.sorewa.kino.ui.theme.KinoMotion.EmphasizedDecelerate))
+                }
+                val fade = Modifier.graphicsLayer { alpha = appear.value }
                 val movie = isMovie(d)
                 // Без сети большая кнопка включает только скачанное.
                 val up = if (offlineMode) nextUp(downloadedOnly(d, local)) else nextUp(d)
@@ -447,7 +501,7 @@ fun TitleScreen(
                 LazyColumn(Modifier.fillMaxSize(), state = listState) {
                     item { TitleHeader(d, voices) }
                     item {
-                        Column(Modifier.padding(horizontal = 20.dp)) {
+                        Column(fade.padding(horizontal = 20.dp)) {
                             if (up != null) {
                                 PrimaryButton(
                                     text = up.label,
@@ -508,7 +562,7 @@ fun TitleScreen(
 
                     if (!movie && eps.isNotEmpty()) {
                         item {
-                            SeasonBar(
+                            Box(fade) { SeasonBar(
                                 seasons = seasons,
                                 watched = watchedSeasons(d),
                                 downloaded = localSeasons,
@@ -543,12 +597,12 @@ fun TitleScreen(
                                         load()
                                     }
                                 },
-                            )
+                            ) }
                         }
                         items(eps, key = { it.id }) { ep ->
                             val entry = local[ep.seasonNo to ep.episodeNo]
                             val key = ep.seasonNo to ep.episodeNo
-                            EpisodeRow(
+                            Box(fade) { EpisodeRow(
                                 dlCurrent = entry == null && dlHere.current == key,
                                 dlWaiting = entry == null && key in dlHere.waiting,
                                 dlPercent = if (dlHere.current == key) dl.percent else 0,
@@ -565,7 +619,7 @@ fun TitleScreen(
                                 onDownload = { downloadFor = ep to ep.seasonNo },
                                 onRemoveLocal = { removeLocal = entry },
                                 onToggleWatched = { toggleWatched(ep, it) },
-                            )
+                            ) }
                         }
                     } else if (movie && local.isNotEmpty()) {
                         // Фильм: скачанный файл — отдельной строкой, чтобы было что стереть.
@@ -575,33 +629,83 @@ fun TitleScreen(
                             LocalFileRow(entry, onRemove = { removeLocal = entry })
                         }
                     }
-                    item { Spacer(Modifier.height(32.dp)) }
+                    item { Spacer(Modifier.height(32.dp + LocalBottomBarInset.current)) }
                 }
             }
         }
+        }
 
-        // Пролистали обложку — под строкой состояния появляется подложка,
-        // чтобы часы и значки не легли на текст.
-        val scrolled = listStateHolder.value?.let { it.firstVisibleItemIndex > 0 || it.firstVisibleItemScrollOffset > 120 } ?: false
-        val scrimAlpha by androidx.compose.animation.core.animateFloatAsState(if (scrolled) 1f else 0f, label = "scrim")
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .alpha(scrimAlpha)
-                .background(Brush.verticalGradient(listOf(Bg, Bg.copy(alpha = 0.85f), Color.Transparent)))
-                .statusBarsPadding()
-                .height(56.dp),
+        // Пролистали обложку — шапка становится стеклом: часы и значки не
+        // ложатся на текст, а список размыто проплывает под ними; в шапке —
+        // название тайтла.
+        val scrolled by remember {
+            derivedStateOf { listStateHolder.value?.let { it.firstVisibleItemIndex > 0 || it.firstVisibleItemScrollOffset > 120 } ?: false }
+        }
+        val barAlpha by androidx.compose.animation.core.animateFloatAsState(
+            if (scrolled) 1f else 0f, ru.sorewa.kino.ui.theme.KinoMotion.effects(), label = "bar",
         )
+        if (barAlpha > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer { alpha = barAlpha }
+                    .glass(glass, tint = Bg.copy(alpha = 0.5f), fallback = Bg, rim = false)
+                    .statusBarsPadding()
+                    .height(60.dp),
+            )
+        }
 
-        // Кнопка «назад» поверх обложки.
-        IconButton(
-            onClick = { nav.popBackStack() },
-            modifier = Modifier
-                .statusBarsPadding()
-                .padding(8.dp)
-                .size(44.dp)
-                .background(Color(0x66000000), CircleShape),
-        ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", tint = Color.White) }
+        Row(
+            Modifier.statusBarsPadding().padding(8.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // «Назад» — стеклянный круг: над обложкой сквозь него видна размытая обложка.
+            IconButton(
+                onClick = { nav.popBackStack() },
+                modifier = Modifier
+                    .size(44.dp)
+                    .glass(glass, CircleShape, tint = Color.Black.copy(alpha = 0.28f), fallback = Color(0x66000000), blur = 16.dp),
+            ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", tint = Color.White) }
+            val name = detail?.title?.title?.let { splitTitle(it).first }.orEmpty()
+            if (barAlpha > 0f && name.isNotEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextMain,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer {
+                            alpha = barAlpha
+                            translationY = (1f - barAlpha) * 8.dp.toPx()
+                        },
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            // Движок на устройстве сам о тайтле больше не спросит (бережность): обновить —
+            // по просьбе человека. У сервера своё расписание, кнопки там нет.
+            if (container.local && !offlineMode && detail != null) {
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = { refresh() },
+                    enabled = !refreshing,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .glass(glass, CircleShape, tint = Color.Black.copy(alpha = 0.28f), fallback = Color(0x66000000), blur = 16.dp),
+                ) {
+                    if (refreshing) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(Icons.Rounded.Refresh, "Обновить с площадок", tint = Color.White)
+                    }
+                }
+            }
+        }
     }
 
     // Диалог скачивания: для серии — манифест по её id, для сезона — по
@@ -647,6 +751,25 @@ fun TitleScreen(
             dismissButton = { androidx.compose.material3.TextButton(onClick = { removeLocal = null }) { Text("Отмена") } },
         )
     }
+}
+
+/** Итог «Обновить» одной-двумя фразами: что нашлось, что изменилось, кто промолчал. */
+fun refreshSummary(r: ru.sorewa.kino.data.TitleRefresh): String {
+    if (r.waitSec > 0) return "Тайтл только что обновляли — повторить можно через ${r.waitSec} с"
+    val parts = mutableListOf<String>()
+    when {
+        r.added.isNotEmpty() -> parts += "Добавлено: " + r.added.joinToString { it.name }
+        r.asked.isNotEmpty() -> parts += "У других площадок тайтл не нашёлся"
+        r.failed.isEmpty() -> parts += "Других включённых площадок нет"
+    }
+    val diff = r.episodesAfter - r.episodesBefore
+    when {
+        diff > 0 -> parts += "новых серий: $diff"
+        r.refetched.isNotEmpty() -> parts += "серии перечитаны"
+    }
+    if (r.failed.isNotEmpty()) parts += "не ответили: " + r.failed.joinToString { it.name }
+    if (r.refetchFailed.isNotEmpty()) parts += "серии не отдали: " + r.refetchFailed.joinToString { it.name }
+    return parts.joinToString(". ") { p -> p.replaceFirstChar { it.uppercase() } }
 }
 
 /**

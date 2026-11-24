@@ -27,6 +27,23 @@ class EngineSettingsTest {
         assertFalse("кадры серий — по запросу на серию, по умолчанию выключены", env.containsKey("ENGINE_THUMBS"))
     }
 
+    @Test fun `по умолчанию площадки спрашиваются до первой нашедшей`() {
+        assertEquals("first", EngineSettings().toEnv()["ENGINE_SOURCES_MODE"])
+    }
+
+    @Test fun `режим «все площадки» — поиск без остановки на первой нашедшей`() {
+        val env = EngineSettings(sourcesMode = EngineSettings.SOURCES_ALL, searchPerSource = 4).toEnv()
+        assertEquals("all", env["ENGINE_SOURCES_MODE"])
+        assertEquals("0", env["ENGINE_SEARCH_MIN_HITS"])
+        assertEquals("4", env["ENGINE_SEARCH_PER_SOURCE"])
+    }
+
+    @Test fun `неизвестный режим — бережный`() {
+        val env = EngineSettings(sourcesMode = "everything").toEnv()
+        assertEquals("first", env["ENGINE_SOURCES_MODE"])
+        assertEquals("3", env["ENGINE_SEARCH_MIN_HITS"])
+    }
+
     @Test fun `кадры серий включаются явно`() {
         assertEquals("1", EngineSettings(thumbs = true).toEnv()["ENGINE_THUMBS"])
     }

@@ -178,6 +178,54 @@ func TestVoices_MergedAcrossProviders(t *testing.T) {
 	}
 }
 
+// growingTitles — серия, к которой по ходу привязывается новая площадка.
+type growingTitles struct {
+	voiceTitles
+	mu     sync.Mutex
+	offers []catalog.Offer
+}
+
+func (g *growingTitles) Offers(context.Context, kernel.EpisodeID) ([]catalog.Offer, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]catalog.Offer(nil), g.offers...), nil
+}
+
+// Привязалась новая площадка («Обновить», досбор) — её озвучки видны сразу, а не
+// через срок памяти списка; пока площадки серии те же, список берётся из памяти.
+func TestVoices_NewOfferRebuildsCachedList(t *testing.T) {
+	v := psyVoices()
+	all, _ := voiceTitles{}.Offers(context.Background(), 0)
+	g := &growingTitles{offers: all[1:]} // kinopub и animego_fr, без animego_me
+	tk := fakeTickets{store: map[kernel.TicketID]playback.Ticket{}}
+	svc := NewService(g, tk, &voiceResolver{}, fakeSessions{},
+		fixedClock{time.Date(2026, 10, 3, 19, 26, 0, 0, time.UTC)}, fixedIDs{}).WithVoices(v)
+	svc.attempt = 50 * time.Millisecond
+
+	l, err := svc.Voices(context.Background(), 3264606)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Find("AniDUB"); ok {
+		t.Fatal("AniDUB — только у animego_me, которой у серии ещё нет")
+	}
+	calls := v.calls
+	if _, err := svc.Voices(context.Background(), 3264606); err != nil || v.calls != calls {
+		t.Fatalf("те же площадки — список не из памяти: %d → %d", calls, v.calls)
+	}
+
+	g.mu.Lock()
+	g.offers = all
+	g.mu.Unlock()
+	l, err = svc.Voices(context.Background(), 3264606)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Find("AniDUB"); !ok {
+		t.Fatalf("новая площадка не попала в список: %v", titles(l))
+	}
+}
+
 // Лежащая площадка не спрашивается, не ответившая — называется: список
 // неполон, и человек должен это видеть.
 func TestVoices_SilentProviders(t *testing.T) {

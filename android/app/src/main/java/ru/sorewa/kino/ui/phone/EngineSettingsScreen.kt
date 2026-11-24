@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -156,7 +157,7 @@ fun EngineSettingsScreen(nav: NavHostController) {
         }
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = LocalBottomBarInset.current)) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
             Text("Локальный движок", style = MaterialTheme.typography.headlineMedium)
@@ -300,9 +301,29 @@ fun EngineSettingsScreen(nav: NavHostController) {
                 Text(
                     "Движок сам ничего не обходит и в фоне не ходит на площадки: они спрашиваются только когда " +
                         "вы ищете, открываете тайтл или смотрите. Всё найденное запоминается насовсем: повторный " +
-                        "поиск и повторное открытие идут из памяти устройства, без запросов.",
+                        "поиск и повторное открытие идут из памяти устройства, без запросов. Спросить площадки " +
+                        "о тайтле заново — «Обновить» на его странице.",
                     style = MaterialTheme.typography.bodySmall, color = TextDim,
                 )
+                Spacer(Modifier.height(14.dp))
+                Text("Какие площадки спрашивать о тайтле", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (draft.sourcesMode == EngineSettings.SOURCES_ALL) {
+                        "Поиск спрашивает все включённые площадки, а открытие тайтла — каждую включённую, где его " +
+                            "ещё не искали (один раз; включили новую — спросится и она). Больше серий и озвучек, " +
+                            "но и запросов больше: на части площадок поиск стоит десяток запросов."
+                    } else {
+                        "Площадки спрашиваются по очереди, пока не найдётся достаточно: тайтл берёт серии и " +
+                            "озвучки у ответивших. Остальные включённые площадки спрашиваются о нём, только " +
+                            "когда вы нажмёте «Обновить» на его странице. Меньше всего запросов."
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = TextDim,
+                )
+                Spacer(Modifier.height(6.dp))
+                ChipChoices(
+                    listOf(EngineSettings.SOURCES_FIRST to "Первую нашедшую", EngineSettings.SOURCES_ALL to "Все включённые"),
+                    if (draft.sourcesMode == EngineSettings.SOURCES_ALL) EngineSettings.SOURCES_ALL else EngineSettings.SOURCES_FIRST,
+                ) { draft = draft.copy(sourcesMode = it) }
                 Spacer(Modifier.height(14.dp))
                 Text("Обновлять тайтл не чаще, чем раз в", style = MaterialTheme.typography.bodyLarge)
                 Text(
@@ -317,7 +338,11 @@ fun EngineSettingsScreen(nav: NavHostController) {
                 Spacer(Modifier.height(14.dp))
                 Text("Находок с одной площадки при поиске", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "Меньше — меньше запросов. Спрашивается лучшая площадка, остальные — только если у неё нашлось мало.",
+                    if (draft.sourcesMode == EngineSettings.SOURCES_ALL) {
+                        "Меньше — меньше запросов: на части площадок за каждой находкой идёт свой запрос."
+                    } else {
+                        "Меньше — меньше запросов. Спрашивается лучшая площадка, остальные — только если у неё нашлось мало."
+                    },
                     style = MaterialTheme.typography.bodySmall, color = TextDim,
                 )
                 Spacer(Modifier.height(6.dp))
@@ -440,7 +465,7 @@ fun EngineSettingsScreen(nav: NavHostController) {
         }
 
         if (dirty) {
-            Column(Modifier.fillMaxWidth().background(Surface1).navigationBarsPadding().padding(16.dp)) {
+            Column(Modifier.fillMaxWidth().background(Surface1).then(if (LocalBottomBarInset.current > 0.dp) Modifier else Modifier.navigationBarsPadding()).padding(16.dp)) {
                 PrimaryButton(
                     if (applying) "Применяю…" else "Применить и перезапустить движок",
                     Modifier.fillMaxWidth(), busy = applying, enabled = canApply,
@@ -501,7 +526,7 @@ fun EngineSettingsScreen(nav: NavHostController) {
 
 /** Ряд вариантов-«пилюль»: выбран один. */
 @Composable
-private fun ChipChoices(options: List<Pair<Int, String>>, selected: Int, onSelect: (Int) -> Unit) {
+private fun <T> ChipChoices(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (value, label) ->
             val sel = value == selected

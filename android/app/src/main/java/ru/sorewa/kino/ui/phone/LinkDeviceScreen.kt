@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -93,7 +94,8 @@ fun LinkDeviceScreen(nav: NavHostController) {
             .fillMaxSize()
             .statusBarsPadding()
             .imePadding()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = LocalBottomBarInset.current),
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }

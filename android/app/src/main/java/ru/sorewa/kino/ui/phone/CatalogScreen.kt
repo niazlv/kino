@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -127,7 +128,7 @@ fun CatalogScreen(nav: NavHostController) {
     LazyVerticalGrid(
         state = state,
         columns = posterCells(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp + LocalBottomBarInset.current),
         verticalArrangement = Arrangement.spacedBy(18.dp),
         horizontalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 12.dp),
         modifier = Modifier.fillMaxSize().then(if (tv) Modifier else Modifier.statusBarsPadding()).tvFocusMemory().tvGridNav(state),
@@ -227,7 +228,7 @@ fun CatalogScreen(nav: NavHostController) {
             }
             else -> {
                 itemsIndexed(items, key = { _, t -> t.id }) { idx, t ->
-                    TitleCard(title = t, modifier = Modifier.tvFocusKey(focusMem, t.id), onClick = { nav.openTitle(t.id) })
+                    TitleCard(title = t, modifier = Modifier.tvFocusKey(focusMem, t.id), onClick = { nav.openTitle(t) })
                     if (idx >= items.size - 6) LaunchedEffect(items.size) { paged.more() }
                 }
                 if (paged.loading) {

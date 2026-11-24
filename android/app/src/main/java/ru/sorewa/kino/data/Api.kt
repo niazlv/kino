@@ -358,6 +358,14 @@ class Api(
 
     suspend fun title(id: Long): TitleDetail = get("/titles/$id")
 
+    /**
+     * «Обновить»: спросить о тайтле включённые площадки, которых у него нет, и
+     * перечитать серии всех его площадок. Есть только у локального движка (у сервера —
+     * 404). Площадки медленные — потолок свой, как у проверки площадки.
+     */
+    suspend fun refreshTitle(id: Long): TitleRefresh =
+        post<Unit, TitleRefresh>("/titles/$id/refresh", timeoutMs = 100_000)
+
     suspend fun setPrefs(titleId: Long, patch: PrefsPatch): Prefs =
         put("/titles/$titleId/prefs", patch)
 

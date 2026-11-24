@@ -31,8 +31,8 @@ android {
         applicationId = "ru.sorewa.kino"
         minSdk = 24
         targetSdk = 36
-        versionCode = 29
-        versionName = "0.2.19"
+        versionCode = 30
+        versionName = "0.2.20"
         buildConfigField("String", "BASE_URL", "\"$kinoUrl\"")
         // Копия рядом с настоящим приложением (проверка на телефоне, не затирая
         // установленное): ./gradlew -PappIdSuffix=.check :app:assembleDebug

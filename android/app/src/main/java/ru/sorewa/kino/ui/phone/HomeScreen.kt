@@ -1,5 +1,14 @@
 package ru.sorewa.kino.ui.phone
 
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.WindowInsets
+import ru.sorewa.kino.ui.rememberGlassSource
+import ru.sorewa.kino.ui.glassSource
+import ru.sorewa.kino.ui.glass
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -120,8 +129,11 @@ fun HomeScreen(nav: NavHostController) {
     val contItems = cont.items
     val refreshing = cont.loading && contItems != null
 
-    PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshKey++ }, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize()) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val glass = rememberGlassSource()
+    Box(Modifier.fillMaxSize()) {
+    PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshKey++ }, modifier = Modifier.fillMaxSize().glassSource(glass)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
             item {
                 Row(
                     Modifier
@@ -173,7 +185,8 @@ fun HomeScreen(nav: NavHostController) {
                                         name = it.title,
                                         sub = describeContinue(it),
                                         progress = progressOf(it),
-                                        modifier = Modifier.width(264.dp),
+                                        // Убранное из «Продолжить» уезжает, соседи плавно сдвигаются.
+                                        modifier = Modifier.animateItem().width(264.dp),
                                         onLongClick = { menuFor = it },
                                         onClick = { playEpisode(context, it.episodeId, it.titleId) },
                                     )
@@ -211,7 +224,7 @@ fun HomeScreen(nav: NavHostController) {
                                 titleId = t.id, name = t.title, hasArt = t.hasArt,
                                 sub = kindSubtitle(t.kind, t.year, t.species),
                                 modifier = Modifier.width(128.dp),
-                                onClick = { nav.openTitle(t.id) },
+                                onClick = { nav.openTitle(t) },
                             )
                         }
                     }
@@ -228,7 +241,7 @@ fun HomeScreen(nav: NavHostController) {
                                     titleId = t.id, name = t.title, hasArt = t.hasArt,
                                     sub = kindSubtitle(t.kind, t.year, t.species),
                                     modifier = Modifier.width(128.dp),
-                                    onClick = { nav.openTitle(t.id) },
+                                    onClick = { nav.openTitle(t) },
                                 )
                             }
                         }
@@ -236,8 +249,24 @@ fun HomeScreen(nav: NavHostController) {
                 }
             }
 
-            item { Spacer(Modifier.height(24.dp)) }
+            item { Spacer(Modifier.height(24.dp + LocalBottomBarInset.current)) }
         }
+    }
+    // Лента уехала под строку состояния — под часами и значками стекло,
+    // как у системных панелей: текст и постеры под ними не мешают читать.
+    val under by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val stripAlpha by androidx.compose.animation.core.animateFloatAsState(
+        if (under) 1f else 0f, ru.sorewa.kino.ui.theme.KinoMotion.effects(), label = "status",
+    )
+    if (stripAlpha > 0f) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBars)
+                .graphicsLayer { alpha = stripAlpha }
+                .glass(glass, tint = Bg.copy(alpha = 0.5f), fallback = Bg.copy(alpha = 0.92f), rim = false),
+        )
+    }
     }
 
     menuFor?.let { it ->

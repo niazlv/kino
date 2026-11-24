@@ -1,5 +1,11 @@
 package ru.sorewa.kino.ui.phone
 
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.HorizontalPager
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -107,15 +113,30 @@ fun MineScreen(nav: NavHostController, initialTab: Int = 0) {
                     Avatar(ru.sorewa.kino.ui.Profile.name(session.displayName.ifEmpty { session.lastLogin }), size = 32.dp)
                 }
             }
-            PillRow(TABS, tab, { tab = it })
         }
-        Spacer(Modifier.height(if (tv) 4.dp else 8.dp))
-        when (tab) {
-            0 -> FollowGrid(nav, onlyNew = false)
-            1 -> FollowGrid(nav, onlyNew = true)
-            2 -> WatchlistGrid(nav)
-            else -> HistoryList(nav)
+        if (tv) {
+            Spacer(Modifier.height(4.dp))
+            MineTab(nav, tab)
+        } else {
+            // Телефон: вкладки листаются свайпом, как положено вкладкам Android;
+            // таблетка следует за страницей, тап по таблетке листает к ней.
+            val pager = rememberPagerState(initialPage = tab) { TABS.size }
+            val scope = rememberCoroutineScope()
+            LaunchedEffect(pager) { snapshotFlow { pager.currentPage }.collect { tab = it } }
+            PillRow(TABS, tab, { scope.launch { pager.animateScrollToPage(it) } }, followSelected = true)
+            Spacer(Modifier.height(8.dp))
+            HorizontalPager(pager, Modifier.fillMaxSize(), key = { it }, verticalAlignment = Alignment.Top) { page -> MineTab(nav, page) }
         }
+    }
+}
+
+@Composable
+private fun MineTab(nav: NavHostController, tab: Int) {
+    when (tab) {
+        0 -> FollowGrid(nav, onlyNew = false)
+        1 -> FollowGrid(nav, onlyNew = true)
+        2 -> WatchlistGrid(nav)
+        else -> HistoryList(nav)
     }
 }
 
@@ -140,7 +161,7 @@ private fun FollowGrid(nav: NavHostController, onlyNew: Boolean) {
         else -> PosterGrid(paged.loading, onMore = { paged.more() }, count = items.size) { mem ->
             itemsIndexed(items, key = { _, it -> it.titleId }) { idx, it ->
                 PosterCard(
-                    modifier = Modifier.tvFocusKey(mem, it.titleId),
+                    modifier = (if (LocalTv.current) Modifier else Modifier.animateItem()).tvFocusKey(mem, it.titleId),
                     titleId = it.titleId, name = it.title, hasArt = it.hasArt,
                     sub = if (it.unwatched > 0) "${it.unwatched} ${plural(it.unwatched, "новая", "новые", "новых")}" else "всё просмотрено",
                     badge = if (it.unwatched > 0) "+${it.unwatched}" else null,
@@ -168,10 +189,10 @@ private fun WatchlistGrid(nav: NavHostController) {
         else -> PosterGrid(paged.loading, onMore = { paged.more() }, count = items.size) { mem ->
             itemsIndexed(items, key = { _, t -> t.id }) { idx, t ->
                 PosterCard(
-                    modifier = Modifier.tvFocusKey(mem, t.id),
+                    modifier = (if (LocalTv.current) Modifier else Modifier.animateItem()).tvFocusKey(mem, t.id),
                     titleId = t.id, name = t.title, hasArt = t.hasArt,
                     sub = kindSubtitle(t.kind, t.year, t.species),
-                    onClick = { nav.openTitle(t.id) },
+                    onClick = { nav.openTitle(t) },
                 )
                 if (idx >= items.size - 6) LaunchedEffect(items.size) { paged.more() }
             }
@@ -194,7 +215,7 @@ private fun PosterGrid(
     LazyVerticalGrid(
         state = state,
         columns = posterCells(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp + LocalBottomBarInset.current),
         verticalArrangement = Arrangement.spacedBy(18.dp),
         horizontalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 12.dp),
         modifier = Modifier.fillMaxSize().tvFocusMemory().tvGridNav(state),
@@ -214,7 +235,7 @@ fun HistoryList(nav: NavHostController) {
         paged.error.isNotEmpty() && items == null -> ErrorView(paged.error) { paged.reload() }
         items == null -> PosterGridSkeleton(columns = 2, rows = 3)
         items.isEmpty() -> EmptyState(Icons.Rounded.History, "История пуста", "Здесь будет всё, что вы смотрели.")
-        else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp + LocalBottomBarInset.current)) {
             itemsIndexed(items, key = { _, it -> it.episodeId }) { idx, item ->
                 val day = dayLabel(item.updatedAt)
                 if (idx == items.indexOfFirst { dayLabel(it.updatedAt) == day }) {

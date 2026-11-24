@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +40,8 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Swipe
+import androidx.compose.material.icons.rounded.SwipeRight
+import androidx.compose.material.icons.rounded.CallToAction
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -74,6 +77,7 @@ import ru.sorewa.kino.player.Quality
 import ru.sorewa.kino.ui.Avatar
 import ru.sorewa.kino.ui.CenterSpinner
 import ru.sorewa.kino.ui.LocalTv
+import ru.sorewa.kino.ui.UiPrefs
 import ru.sorewa.kino.ui.tvFocusRing
 import ru.sorewa.kino.ui.Overline
 import ru.sorewa.kino.ui.Panel
@@ -137,7 +141,8 @@ fun SettingsScreen(nav: NavHostController) {
         Modifier
             .fillMaxSize()
             .then(if (tv) Modifier else Modifier.statusBarsPadding())
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = LocalBottomBarInset.current),
     ) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!tv && nav.previousBackStackEntry != null) {
@@ -174,6 +179,19 @@ fun SettingsScreen(nav: NavHostController) {
             if (tv && ru.sorewa.kino.tvhome.TvLauncher.supported(context)) {
                 Overline("Главный экран", Modifier.padding(start = 8.dp, top = 6.dp))
                 Group { HomeChannelRow() }
+            }
+
+            if (!tv) {
+                Overline("Оформление", Modifier.padding(start = 8.dp, top = 6.dp))
+                Group {
+                    Choice(
+                        Icons.Rounded.CallToAction, "Нижняя панель", null,
+                        listOf(true to "Капсула", false to "Во всю ширину"), UiPrefs.capsuleBar,
+                    ) { UiPrefs.capsuleBar = it }
+                    SwitchRow(Icons.Rounded.SwipeRight, "Назад свайпом вправо с любого места", UiPrefs.swipeBack) {
+                        UiPrefs.swipeBack = it
+                    }
+                }
             }
 
             Overline("Плеер", Modifier.padding(start = 8.dp, top = 6.dp))

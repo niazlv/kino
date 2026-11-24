@@ -180,6 +180,60 @@ func (s *Server) handleTitle(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type refreshDTO struct {
+	// Asked — каких площадок спросили о тайтле; Added — какие к нему привязались;
+	// Failed — какие не ответили.
+	Asked  []sourceDTO `json:"asked"`
+	Added  []sourceDTO `json:"added"`
+	Failed []sourceDTO `json:"failed"`
+	// Refetched — у каких площадок перечитаны серии; RefetchFailed — какие их не отдали.
+	Refetched     []sourceDTO `json:"refetched"`
+	RefetchFailed []sourceDTO `json:"refetchFailed"`
+	// Sources — площадки тайтла после обновления.
+	Sources        []sourceDTO `json:"sources"`
+	EpisodesBefore int         `json:"episodesBefore"`
+	EpisodesAfter  int         `json:"episodesAfter"`
+	// WaitSec — тайтл только что обновляли: площадки не спрашивались, повторить
+	// можно через столько секунд.
+	WaitSec int `json:"waitSec,omitempty"`
+}
+
+func (s *Server) handleRefreshTitle(w http.ResponseWriter, r *http.Request) {
+	if s.refresher == nil {
+		httpx.Fail(w, r, s.log, kernel.ErrNotFound)
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "titleID"), 10, 64)
+	if err != nil {
+		httpx.Fail(w, r, s.log, kernel.ErrInvalidInput)
+		return
+	}
+	rep, err := s.refresher.Refresh(r.Context(), kernel.TitleID(id))
+	if err != nil {
+		httpx.Fail(w, r, s.log, err)
+		return
+	}
+	t, err := s.catalog.Title(r.Context(), kernel.TitleID(id))
+	if err != nil {
+		httpx.Fail(w, r, s.log, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, refreshDTO{
+		Asked: s.namedSources(rep.Asked), Added: s.namedSources(rep.Attached),
+		Failed: s.namedSources(rep.Failed), Refetched: s.namedSources(rep.Refetched),
+		RefetchFailed: s.namedSources(rep.RefetchFailed), Sources: s.titleSources(t.Sources),
+		EpisodesBefore: rep.EpisodesBefore, EpisodesAfter: rep.EpisodesAfter, WaitSec: rep.Wait,
+	})
+}
+
+func (s *Server) namedSources(ids []string) []sourceDTO {
+	out := make([]sourceDTO, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, sourceDTO{ID: id, Name: s.providerName(id)})
+	}
+	return out
+}
+
 // titleSources — площадки тайтла для витрины: без выключенных и без
 // повторов (у аниме-площадки на тайтл бывает по странице на сезон).
 func (s *Server) titleSources(in []catalog.Source) []sourceDTO {

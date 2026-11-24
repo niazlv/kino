@@ -154,6 +154,12 @@ data class EngineSettings(
     /** Кадры серий по одному запросу на каждую: красиво, но на сериале в сотню серий — сотня запросов. */
     val thumbs: Boolean = false,
     /**
+     * Кого спрашивать о тайтле: [SOURCES_FIRST] — первую площадку, нашедшую достаточно (остальные —
+     * по «Обновить» на странице тайтла); [SOURCES_ALL] — все включённые: поиск идёт ко всем, а при
+     * открытии тайтла спрашивается каждая включённая площадка, которой у него нет (один раз).
+     */
+    val sourcesMode: String = SOURCES_FIRST,
+    /**
      * Подпись (User-Agent) для всех площадок. Пусто — по умолчанию: браузероподобная, с
      * явной пометкой приложения и его версии. Менять не советуем; что задано здесь —
      * уходит наружу как есть, на совести человека.
@@ -195,14 +201,17 @@ data class EngineSettings(
             userAgents[id]?.trim()?.takeIf { it.isNotEmpty() && validateUserAgent(it) == null }
                 ?.let { env[USER_AGENT_ENV_PREFIX + id.uppercase()] = it }
         }
-        // Порядок опроса — порядок в списке источников: лучшая площадка первой, остальные
-        // — только если у неё нашлось мало (так поиск стоит один запрос, а не по запросу
-        // на каждую включённую площадку). Тот же порядок задаёт, чья карточка главнее.
+        // Порядок опроса — порядок в списке источников: лучшая площадка первой. В режиме «первая
+        // нашедшая» остальные спрашиваются, только если у неё нашлось мало (так поиск стоит один
+        // запрос, а не по запросу на каждую включённую площадку); в режиме «все» — всегда.
+        // Тот же порядок задаёт, чья карточка главнее.
         val active = activeProviders()
         env["PROVIDER_PRIORITY"] = active.withIndex().joinToString(",") { (i, id) -> "$id=${(100 - i).coerceAtLeast(1)}" }
         val per = searchPerSource.coerceIn(1, MAX_SEARCH_PER_SOURCE)
         env["ENGINE_SEARCH_PER_SOURCE"] = per.toString()
-        env["ENGINE_SEARCH_MIN_HITS"] = minOf(per, SEARCH_ENOUGH_HITS).toString()
+        val all = sourcesMode == SOURCES_ALL
+        env["ENGINE_SOURCES_MODE"] = if (all) SOURCES_ALL else SOURCES_FIRST
+        env["ENGINE_SEARCH_MIN_HITS"] = if (all) "0" else minOf(per, SEARCH_ENOUGH_HITS).toString()
         env["ENGINE_REFRESH_HOURS"] = refreshHours.coerceIn(1, MAX_REFRESH_HOURS).toString()
         if (thumbs) env["ENGINE_THUMBS"] = "1"
         if (debugLog) env["LOG_LEVEL"] = "DEBUG"
@@ -234,6 +243,10 @@ data class EngineSettings(
 
         /** Сколько находок у площадки считается «достаточно» — к следующей идти не нужно. */
         const val SEARCH_ENOUGH_HITS = 3
+
+        /** Режимы опроса площадок ([sourcesMode]); значения — как у движка (ENGINE_SOURCES_MODE). */
+        const val SOURCES_FIRST = "first"
+        const val SOURCES_ALL = "all"
     }
 }
 

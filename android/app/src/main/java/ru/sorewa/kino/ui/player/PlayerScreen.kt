@@ -1,7 +1,13 @@
 package ru.sorewa.kino.ui.player
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -53,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -433,9 +440,18 @@ fun PlayerScreen(
         )
 
         val panel = !state.pip && controlsVisible
+        // Панель проявляется и гаснет за 0,18 с — как в веб-плеере (opacity .18s).
+        // На ТВ — сразу: фокус пульта ставится на её кнопки в момент появления,
+        // и гаснущие кнопки не должны его держать.
+        val panelAlpha by animateFloatAsState(
+            if (panel) 1f else 0f,
+            if (isTv) snap() else tween(180, easing = LinearEasing),
+            label = "panel",
+        )
+        val panelDrawn = panel || panelAlpha > 0f
 
         // Затемнение кадра, пока видна панель.
-        if (panel) Box(Modifier.fillMaxSize().background(KpScrim))
+        if (panelDrawn) Box(Modifier.fillMaxSize().graphicsLayer { alpha = panelAlpha }.background(KpScrim))
 
         // Тяга по кадру: куда перематывает.
         if (dragMs >= 0 && state.durationMs > 0) {
@@ -451,12 +467,18 @@ fun PlayerScreen(
         }
 
         // Подсказка двойного тапа: «−15 с» / «+15 с» у края.
-        flash?.let { (fwd, _) ->
+        flash?.let { (fwd, at) ->
+            // Как kp-flash веб-плеера: держится 60 % времени, потом гаснет.
+            val flashAlpha = remember(at) { Animatable(1f) }
+            LaunchedEffect(at) {
+                flashAlpha.animateTo(0f, keyframes { durationMillis = 700; 1f at 420 using FastOutSlowInEasing })
+            }
             Box(
                 Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(0.36f)
                     .align(if (fwd) Alignment.CenterEnd else Alignment.CenterStart)
+                    .graphicsLayer { alpha = flashAlpha.value }
                     .background(
                         Brush.radialGradient(
                             listOf(Color(0x38FFFFFF), Color.Transparent),
@@ -486,11 +508,20 @@ fun PlayerScreen(
             Spinner(Modifier.align(Alignment.Center))
         }
 
-        // Свайп яркости или громкости: столбик у своего края.
-        gesture?.let { (vol, frac) ->
+        // Свайп яркости или громкости: столбик у своего края. Появляется сразу,
+        // за пальцем, а гаснет плавно — с последним значением.
+        var lastGesture by remember { mutableStateOf(gesture) }
+        if (gesture != null) lastGesture = gesture
+        val gestureAlpha by animateFloatAsState(
+            if (gesture != null) 1f else 0f,
+            if (gesture != null) snap() else tween(250),
+            label = "gesture",
+        )
+        lastGesture?.takeIf { gestureAlpha > 0f }?.let { (vol, frac) ->
             Column(
                 Modifier
                     .align(if (vol) Alignment.CenterEnd else Alignment.CenterStart)
+                    .graphicsLayer { alpha = gestureAlpha }
                     .padding(horizontal = 40.dp)
                     .background(Color(0x99000000), RoundedCornerShape(14.dp))
                     .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -510,9 +541,10 @@ fun PlayerScreen(
         // Как у Kino.Watch: название без оригинала, код серии и год одной
         // строкой, название серии — второй, обычным регистром; под ними
         // «таблетки». Часы и сводка — только по «i», в своей плашке.
-        if (panel) {
+        if (panelDrawn) {
             Column(
                 Modifier
+                    .graphicsLayer { alpha = panelAlpha }
                     .fillMaxWidth()
                     .background(KpPlate)
                     .windowInsetsPadding(WindowInsets.displayCutout)
@@ -666,7 +698,12 @@ fun PlayerScreen(
         }
 
         // ---------- пропуск заставки и титров ----------
-        val skipBottom = if (panel) 148.dp else if (keyScrubMs >= 0) 96.dp else 32.dp
+        // Кнопка пропуска уступает место панели плавно (в веб-плеере — bottom .18s).
+        val skipBottom by animateDpAsState(
+            if (panel) 148.dp else if (keyScrubMs >= 0) 96.dp else 32.dp,
+            if (isTv) snap() else tween(180),
+            label = "skip",
+        )
         if (skipShown && active != null) {
             val offerNext = active.kind == SkipKind.OUTRO || active.kind == SkipKind.PREVIEW
             SkipButton(
@@ -728,10 +765,11 @@ fun PlayerScreen(
         }
 
         // ---------- низ: время — полоса — длительность, ряд кнопок ----------
-        if (panel) {
+        if (panelDrawn) {
             Column(
                 Modifier
                     .align(Alignment.BottomCenter)
+                    .graphicsLayer { alpha = panelAlpha }
                     .fillMaxWidth()
                     .background(KpPlate)
                     .windowInsetsPadding(WindowInsets.displayCutout)
@@ -1118,12 +1156,16 @@ private fun ChoiceItems(g: MenuGroup, done: () -> Unit) {
 private fun SkipButton(text: String, modifier: Modifier = Modifier, small: Boolean = false, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
+    // Проявляется, как kp-skip-in веб-плеера (.22s).
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(220)) }
     Text(
         text,
         color = if (focused) Color(0xFF111111) else Color.White,
         fontSize = 14.sp,
         fontWeight = if (small) FontWeight.Medium else FontWeight.SemiBold,
         modifier = modifier
+            .graphicsLayer { alpha = appear.value }
             .clip(RoundedCornerShape(6.dp))
             .background(if (focused) Color.White else Color(0xBD101010))
             .border(1.dp, Color(0x99FFFFFF), RoundedCornerShape(6.dp))

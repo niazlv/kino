@@ -1,5 +1,6 @@
 package ru.sorewa.kino.ui.phone
 
+import ru.sorewa.kino.ui.LocalBottomBarInset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -305,9 +306,9 @@ fun SearchScreen(nav: NavHostController) {
 
         when {
             submitted.isNotEmpty() && query.trim() == submitted -> Results(nav, submitted, focusMem)
-            suggests.isNotEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
+            suggests.isNotEmpty() -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = LocalBottomBarInset.current)) {
                 items(suggests, key = { it.id }) { t ->
-                    SuggestRow(t, Modifier.tvFocusKey(focusMem, "s${t.id}"), onOpen = { nav.openTitle(t.id) })
+                    SuggestRow(t, Modifier.tvFocusKey(focusMem, "s${t.id}"), onOpen = { nav.openTitle(t) })
                 }
                 item {
                     ru.sorewa.kino.ui.FocusTextButton(
@@ -443,7 +444,7 @@ private fun Results(nav: NavHostController, q: String, focusMem: ru.sorewa.kino.
         else -> LazyVerticalGrid(
             state = gridState,
             columns = posterCells(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp + LocalBottomBarInset.current),
             verticalArrangement = Arrangement.spacedBy(18.dp),
             horizontalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 12.dp),
             modifier = Modifier.fillMaxSize().tvFocusMemory().tvGridNav(gridState),
@@ -458,7 +459,7 @@ private fun Results(nav: NavHostController, q: String, focusMem: ru.sorewa.kino.
                 }
             }
             itemsIndexed(items, key = { _, t -> t.id }) { idx, t ->
-                TitleCard(title = t, modifier = Modifier.tvFocusKey(focusMem, t.id), onClick = { nav.openTitle(t.id) })
+                TitleCard(title = t, modifier = Modifier.tvFocusKey(focusMem, t.id), onClick = { nav.openTitle(t) })
                 if (idx >= items.size - 6) LaunchedEffect(items.size) { paged.more() }
             }
             if (paged.loading) item(span = { GridItemSpan(maxLineSpan) }) { LoadMore(items.size, false, true) {} }
